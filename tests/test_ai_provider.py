@@ -104,6 +104,48 @@ def test_provider_configuration_reads_environment(monkeypatch):
     assert settings.openai_chat_token_parameter == "max_completion_tokens"
 
 
+def test_key_whitespace_is_normalized():
+    settings = settings_for(openai_api_key="  sk-provider-test\r\n")
+    assert settings.openai_api_key.get_secret_value() == "sk-provider-test"
+
+
+@pytest.mark.parametrize("key", ['Bearer sk-secret', '"sk-secret"', "sk-secret\nother"])
+def test_invalid_key_format_does_not_send_credentials(monkeypatch, key):
+    async def run():
+        calls = []
+        writer = mock_writer(monkeypatch, lambda request: calls.append(request), openai_api_key=key)
+        try:
+            with pytest.raises(WritingError) as error:
+                await writer.parse(Draft, "Test", {}, 700)
+            assert error.value.code == "AI_KEY_FORMAT_INVALID"
+            assert not calls
+        finally:
+            await writer.close()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(("status", "body", "code"), [
+    (401, {"code": "INVALID_API_KEY", "message": "PRIVATE"}, "AI_AUTHENTICATION_FAILED"),
+    (403, {"error": {"message": "PRIVATE"}}, "AI_ACCESS_DENIED"),
+    (404, {"error": {"code": "model_not_found"}}, "AI_MODEL_UNAVAILABLE"),
+    (404, {"message": "PRIVATE"}, "AI_ENDPOINT_UNAVAILABLE"),
+    (400, {"error": {"param": "response_format"}}, "AI_REQUEST_REJECTED"),
+    (400, {"error": {"param": {"secret": "PRIVATE"}, "code": ["PRIVATE"]}}, "AI_REQUEST_REJECTED"),
+])
+def test_structured_provider_error_diagnosis(monkeypatch, status, body, code):
+    async def run():
+        writer = mock_writer(monkeypatch, lambda _: httpx.Response(status, json=body))
+        try:
+            with pytest.raises(WritingError) as error:
+                await writer.parse(Draft, "Test", {}, 700)
+            assert error.value.code == code
+            assert error.value.upstream_status == status
+            assert "PRIVATE" not in str(error.value)
+        finally:
+            await writer.close()
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("response_format", ["json_schema", "json_object", "text"])
 @pytest.mark.parametrize("token_parameter", ["max_tokens", "max_completion_tokens"])
 def test_chat_endpoint_request_and_validated_result(monkeypatch, response_format, token_parameter):

@@ -27,7 +27,8 @@ export async function api(path, { method = "GET", body, timeout = 25000 } = {}) 
         window.dispatchEvent(new Event("session-expired"));
       }
       throw new ApiError(
-        typeof data?.detail === "string" ? data.detail : `Yêu cầu thất bại (HTTP ${response.status}).`,
+        (typeof data?.detail === "string" ? data.detail : `Yêu cầu thất bại (HTTP ${response.status}).`)
+          + (typeof data?.code === "string" ? ` [${data.code}]` : ""),
         response.status,
       );
     }

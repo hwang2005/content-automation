@@ -154,8 +154,8 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
 
     @app.exception_handler(SQLAlchemyError)
     async def database_error(_, error):
-        logger.error("Database operation failed (%s)", type(error).__name__)
-        return JSONResponse({"detail": "Không thể lưu/đọc dữ liệu. Kiểm tra kết nối Supabase và migration, sau đó thử lại."}, status_code=503)
+        logger.error("Database operation failed code=DATABASE_UNAVAILABLE type=%s", type(error).__name__)
+        return JSONResponse({"detail": "Không thể lưu/đọc dữ liệu. Kiểm tra kết nối Supabase và migration, sau đó thử lại.", "code": "DATABASE_UNAVAILABLE"}, status_code=503)
 
     @app.get("/health")
     def health():
@@ -344,7 +344,8 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
     @api.post("/generate", response_model=PostOut, status_code=201)
     async def generate(payload: GenerateInput):
         if not settings.openai_api_key.get_secret_value():
-            raise HTTPException(503, "Chưa cấu hình OPENAI_API_KEY trên máy chủ.")
+            logger.warning("Generation failed code=AI_KEY_MISSING")
+            return JSONResponse({"detail": "Chưa cấu hình OPENAI_API_KEY trên máy chủ.", "code": "AI_KEY_MISSING"}, status_code=503)
         project_data, formats = await run_in_threadpool(load_writing_context, payload.project_id)
         if app.state.generation_slots.locked():
             raise HTTPException(429, "Đang có nhiều bài được tạo. Hãy đợi một chút rồi thử lại.", headers={"Retry-After": "15"})
@@ -362,7 +363,15 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
         except ExtractionError as error:
             raise HTTPException(422, str(error)) from None
         except WritingError as error:
-            raise HTTPException(error.status_code, str(error)) from None
+            # Do not log upstream bodies, headers, prompts, keys or base URL paths.
+            logger.warning(
+                "Generation failed code=%s upstream_status=%s api_mode=%s response_format=%s",
+                error.code, error.upstream_status, settings.ai_api_mode, settings.openai_response_format,
+            )
+            return JSONResponse(
+                {"detail": str(error), "code": error.code, "upstream_status": error.upstream_status},
+                status_code=error.status_code,
+            )
         except TimeoutError:
             raise HTTPException(504, "Quá thời gian tạo bài. Hãy thử nguồn ngắn hơn hoặc kiểm tra lịch sử trước khi thử lại.") from None
         finally:

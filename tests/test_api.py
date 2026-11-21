@@ -1,11 +1,23 @@
 from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import SQLAlchemyError
 
 from backend.ai_writer import Analysis, Fact, WritingError, WritingResult
 from tests.conftest import REQUEST_HEADERS, memory_app
 
 PASTED_TEXT = "Workshop AI dành cho sinh viên. Thời gian: 09:00 ngày 30/12/2026. Tham dự miễn phí."
+
+
+def test_database_error_is_distinguished_from_ai_503(client, project, article_format, caplog):
+    client.app.state.writer.write = AsyncMock(side_effect=SQLAlchemyError("PRIVATE DB credentials"))
+    response = client.post("/api/generate", json={
+        "project_id": project["id"], "source_type": "facebook_paste", "source_text": PASTED_TEXT,
+    })
+    assert response.status_code == 503
+    assert response.json()["code"] == "DATABASE_UNAVAILABLE"
+    assert "PRIVATE" not in response.text + caplog.text
+    assert not client.app.state.generation_slots.locked()
 
 
 def fake_write_result(item):
@@ -128,6 +140,25 @@ def test_failed_generation_does_not_save_and_releases_slot(client, project, arti
     assert response.status_code == 502
     assert client.get(f"/api/projects/{project['id']}/posts").json()["total"] == 0
     assert not client.app.state.generation_slots.locked()
+
+
+def test_generation_exposes_safe_error_code_and_logs_cause(client, project, article_format, caplog):
+    client.app.state.writer.write = AsyncMock(side_effect=WritingError(
+        "Nhà cung cấp từ chối xác thực.", 503,
+        code="AI_AUTHENTICATION_FAILED", upstream_status=401,
+    ))
+    response = client.post("/api/generate", json={
+        "project_id": project["id"], "source_type": "facebook_paste", "source_text": PASTED_TEXT,
+    })
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Nhà cung cấp từ chối xác thực.",
+        "code": "AI_AUTHENTICATION_FAILED", "upstream_status": 401,
+    }
+    assert "upstream_status=401" in caplog.text
+    assert "AI_AUTHENTICATION_FAILED" in caplog.text
+    assert "sk-test-not-a-real-key" not in caplog.text
+    assert client.get(f"/api/projects/{project['id']}/posts").json()["total"] == 0
 
 
 def test_web_url_rejects_facebook_and_private_urls(client, project, article_format):

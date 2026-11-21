@@ -12,9 +12,55 @@ from backend.extractor import SourcePage, plain
 
 
 class WritingError(Exception):
-    def __init__(self, message: str, status_code: int = 502):
+    def __init__(self, message: str, status_code: int = 502, *, code: str = "AI_RESPONSE_ERROR", upstream_status: int | None = None):
         self.status_code = status_code
+        self.code = code
+        self.upstream_status = upstream_status
         super().__init__(message)
+
+
+def provider_error(error: APIStatusError) -> WritingError:
+    """Translate upstream failures without echoing bodies, keys or prompts."""
+    body = error.body if isinstance(error.body, dict) else {}
+    nested = body.get("error")
+    details = nested if isinstance(nested, dict) else body
+    upstream_code = details.get("code")
+    param = details.get("param")
+    upstream_code = upstream_code if isinstance(upstream_code, str) else ""
+    param = param if isinstance(param, str) else ""
+    status = error.status_code
+    options = {"upstream_status": status}
+    if status == 401 or upstream_code in {"INVALID_API_KEY", "API_KEY_REQUIRED", "invalid_api_key"}:
+        return WritingError(
+            "Máy chủ AI từ chối xác thực (HTTP " + str(status) + "). Kiểm tra OPENAI_API_KEY trên chính môi trường đang chạy. "
+            "Dùng key của đúng nhà cung cấp, không kèm 'Bearer', dấu nháy hoặc placeholder. "
+            "Key lưu trong OpenCode không tự chuyển sang Render hay file .env.",
+            503, code="AI_AUTHENTICATION_FAILED", **options,
+        )
+    if status == 403:
+        return WritingError(
+            "Nhà cung cấp AI từ chối quyền truy cập (HTTP 403). Kiểm tra quyền model/endpoint, nhóm key và hạn chế IP trên tài khoản dịch vụ.",
+            503, code="AI_ACCESS_DENIED", **options,
+        )
+    if status == 429:
+        return WritingError("Nhà cung cấp AI giới hạn yêu cầu hoặc hết hạn mức. Kiểm tra quota/billing.", 429, code="AI_RATE_LIMITED", **options)
+    if upstream_code in {"model_not_found", "MODEL_NOT_FOUND", "invalid_model", "unsupported_model"} or param == "model":
+        return WritingError("Nhà cung cấp không chấp nhận model đã cấu hình. Kiểm tra OPENAI_MODEL và quyền gọi model của key.", 503, code="AI_MODEL_UNAVAILABLE", **options)
+    if status in {404, 405, 501}:
+        return WritingError(
+            "Không dùng được endpoint AI (HTTP " + str(status) + "). Kiểm tra OPENAI_BASE_URL và OPENAI_API_MODE. "
+            "responses gọi /responses; chat_completions gọi /chat/completions. Không thêm endpoint vào cuối base URL.",
+            503, code="AI_ENDPOINT_UNAVAILABLE", **options,
+        )
+    if status in {400, 422}:
+        if param in {"response_format", "text", "text.format", "text.format.type"}:
+            hint = "Nhà cung cấp không chấp nhận định dạng phản hồi. Thử OPENAI_RESPONSE_FORMAT=text hoặc json_object theo tài liệu dịch vụ."
+        elif param in {"max_tokens", "max_completion_tokens", "max_output_tokens"}:
+            hint = "Nhà cung cấp không chấp nhận tham số giới hạn token. Với Chat Completions, kiểm tra OPENAI_CHAT_TOKEN_PARAMETER; với Responses, kiểm tra giới hạn model."
+        else:
+            hint = "Nhà cung cấp không chấp nhận yêu cầu. Đối chiếu OPENAI_MODEL, OPENAI_API_MODE và OPENAI_RESPONSE_FORMAT; với Chat Completions kiểm tra OPENAI_CHAT_TOKEN_PARAMETER."
+        return WritingError(hint, 503, code="AI_REQUEST_REJECTED", **options)
+    return WritingError("Nhà cung cấp AI gặp lỗi dịch vụ. Vui lòng thử lại sau.", code="AI_UPSTREAM_ERROR", **options)
 
 
 class StructuredResult(BaseModel):
@@ -169,7 +215,10 @@ class AIWriter:
 
     async def parse(self, schema, system: str, payload: dict, max_tokens: int):
         if not self.client:
-            raise WritingError("Chưa cấu hình OPENAI_API_KEY trên máy chủ.", 503)
+            raise WritingError("Chưa cấu hình OPENAI_API_KEY trên máy chủ.", 503, code="AI_KEY_MISSING")
+        key = self.settings.openai_api_key.get_secret_value()
+        if key and (key.lower().startswith("bearer ") or key.startswith(('"', "'")) or any(char.isspace() for char in key)):
+            raise WritingError("OPENAI_API_KEY chứa prefix Bearer, dấu nháy hoặc khoảng trắng bên trong. Chỉ nhập chuỗi key gốc rồi restart/redeploy.", 503, code="AI_KEY_FORMAT_INVALID")
         if self.settings.openai_response_format != "json_schema":
             system += (
                 "\n\nChỉ trả về một JSON object hợp lệ theo JSON Schema sau. "
@@ -185,16 +234,12 @@ class AIWriter:
             if self.settings.ai_api_mode == "chat_completions":
                 return await self.parse_chat_completions(schema, messages, max_tokens)
             return await self.parse_responses(schema, messages, max_tokens)
-        except RateLimitError:
-            raise WritingError("Nhà cung cấp AI đang giới hạn yêu cầu hoặc tài khoản đã hết hạn mức. Kiểm tra billing/quota rồi thử lại.", 429) from None
+        except RateLimitError as error:
+            raise provider_error(error) from None
         except APIConnectionError:
             raise WritingError("Không kết nối được máy chủ AI hoặc quá thời gian chờ. Kiểm tra OPENAI_BASE_URL và mạng, sau đó thử lại.", 504) from None
         except APIStatusError as error:
-            if error.status_code in {401, 403}:
-                raise WritingError("API key AI không hợp lệ hoặc không có quyền sử dụng mô hình đã chọn tại nhà cung cấp này.", 503) from None
-            if error.status_code in {400, 404, 405, 422, 501}:
-                raise WritingError("Kiểm tra OPENAI_BASE_URL, OPENAI_MODEL, OPENAI_API_MODE và OPENAI_RESPONSE_FORMAT theo khả năng nhà cung cấp; với Chat Completions kiểm tra thêm OPENAI_CHAT_TOKEN_PARAMETER.", 503) from None
-            raise WritingError("Nhà cung cấp AI gặp lỗi dịch vụ. Vui lòng thử lại sau.") from None
+            raise provider_error(error) from None
         except (OpenAIError, ValidationError, ValueError, TypeError, AttributeError):
             raise WritingError("Không đọc được kết quả có cấu trúc từ AI. Vui lòng thử lại.") from None
 

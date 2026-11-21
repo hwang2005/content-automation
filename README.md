@@ -79,6 +79,42 @@ OPENAI_CHAT_TOKEN_PARAMETER=max_tokens
 - Nội dung nguồn, hướng dẫn và mẫu được gửi đến nhà cung cấp bạn chọn; xem chính sách dữ liệu/chi phí của họ. Cấu hình chỉ ở backend, không cho người dùng chọn URL tùy ý qua form và không gửi base URL hoặc key xuống frontend. API không dùng chuẩn OpenAI (ví dụ endpoint riêng yêu cầu `api-version` trong query, auth/header riêng) chưa được hỗ trợ chỉ bằng base URL.
 - Sau khi thay đổi biến môi trường, khởi động lại/redeploy backend. Không cần sửa SQL hoặc database. Trong **Trạng thái Studio**, bạn có thể xem giao thức, model và định dạng đang dùng.
 
+### Chẩn đoán lỗi `POST /api/generate 503`
+
+Dòng access log `503 Service Unavailable` chưa đủ để xác định lỗi. Mở thông báo trên giao diện (hoặc DevTools → Network → `/api/generate` → Response). Lỗi AI có `detail`, `code`, `upstream_status`; Render Logs cũng ghi mã và HTTP upstream, không ghi key hay nội dung nguồn. `DATABASE_UNAVAILABLE` là lỗi truy vấn/lưu Supabase, không phải lỗi AI.
+
+Để kiểm tra **đúng cấu hình môi trường production**, chạy trong Render Shell nếu gói dịch vụ hỗ trợ:
+
+```bash
+python -m backend.check_ai
+```
+
+Lệnh thực hiện một yêu cầu AI nhỏ bằng cùng key, model, base URL, giao thức và định dạng như website; **có thể phát sinh phí**, không đưa vào health check/build/start command. Chỉ trả trạng thái, cấu hình không nhạy cảm và lỗi đã làm sạch; không in key/base URL hoặc nội dung upstream. `ok=true` xác nhận một yêu cầu nhỏ hoạt động, không bảo đảm mọi nguồn dài đều thành công và chưa kiểm tra Supabase.
+
+Nếu Render không có Shell, dùng response `/api/generate` và Render Logs để lấy `code`/`upstream_status`; chạy lệnh trên máy cá nhân không chứng minh key/mạng/IP/quyền trên Render giống nhau. Sau khi thay đổi Environment hoặc mã nguồn, deploy lại bản mới trước khi thử. Không đổi model/giao thức để chữa `AI_AUTHENTICATION_FAILED`: cần sửa key hoặc quyền tài khoản ở nhà cung cấp.
+
+| Mã | Cách xử lý |
+|---|---|
+| `AI_KEY_MISSING` | Đặt `OPENAI_API_KEY` trong môi trường backend đang chạy. Key ở OpenCode không tự được chia sẻ với website. |
+| `AI_KEY_FORMAT_INVALID` | Bỏ `Bearer`, dấu nháy hoặc khoảng trắng bên trong giá trị key. Khoảng trắng ở hai đầu được tự bỏ. |
+| `AI_AUTHENTICATION_FAILED` | Nhà cung cấp từ chối xác thực; kiểm tra đúng key và đúng base URL. Đổi model hay định dạng không sửa được key bị từ chối. |
+| `AI_ACCESS_DENIED` | Kiểm tra quyền model/endpoint, nhóm key, hạn chế IP của dịch vụ. |
+| `AI_MODEL_UNAVAILABLE` | Kiểm tra ID model và quyền sử dụng model của key. |
+| `AI_ENDPOINT_UNAVAILABLE` | Đối chiếu `OPENAI_API_MODE=responses` hoặc `chat_completions` với endpoint dịch vụ thực sự hỗ trợ. |
+| `AI_REQUEST_REJECTED` | Đọc hướng dẫn lỗi; kiểm tra định dạng JSON, model, tham số token với tài liệu dịch vụ. |
+
+Ví dụ để **thử đối chiếu đường gọi Responses** cho cấu hình XingchiAPI/OpenCode đã nêu (không phải xác nhận mọi key/model đều hỗ trợ):
+
+```dotenv
+OPENAI_BASE_URL=https://api.xingchiapi.com/v1
+OPENAI_MODEL=gpt-6.1-sol
+OPENAI_API_MODE=responses
+OPENAI_RESPONSE_FORMAT=text
+# Đặt OPENAI_API_KEY thực của XingchiAPI trong Render Environment, không commit.
+```
+
+Sau khi thay đổi, restart/redeploy backend. Nếu lỗi vẫn là xác thực, cần sửa credential trên tài khoản dịch vụ; ứng dụng không bỏ qua xác thực hoặc tự đọc credential riêng của OpenCode. Nếu response nói lỗi database hoặc mật khẩu workspace thay vì có mã AI, kiểm tra Supabase/migration hoặc `APP_PASSWORD`/`SESSION_SECRET` tương ứng.
+
 ## 2. Tạo database Supabase
 
 1. Tạo project ở [Supabase Dashboard](https://supabase.com/dashboard). Lưu database password ở nơi an toàn.

@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     generate_requests_per_hour: int = Field(default=30, ge=1, le=1000)
     max_concurrent_generations: int = Field(default=2, ge=1, le=10)
 
+    @field_validator("openai_api_key", mode="before")
+    @classmethod
+    def normalize_api_key(cls, value):
+        # Render values and pasted credentials can include trailing spaces/newlines.
+        key = value.get_secret_value() if isinstance(value, SecretStr) else value
+        return key.strip() if isinstance(key, str) else key
+
     @field_validator("openai_base_url")
     @classmethod
     def validate_base_url(cls, value: str) -> str:

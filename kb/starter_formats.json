@@ -1,0 +1,29 @@
+[
+  {
+    "name": "Cơ hội học bổng",
+    "description": "Dùng khi nội dung chính là học bổng, tài trợ học tập hoặc cơ hội trao đổi có hỗ trợ tài chính. Không dùng cho khóa học trả phí thông thường.",
+    "structure": "1. Tiêu đề ngắn: emoji + tên học bổng/cơ hội.\n2. Mở đầu 1–2 câu giới thiệu giá trị và đối tượng.\n3. Các quyền lợi có trong nguồn.\n4. Thông tin: đối tượng, đơn vị tổ chức, hạn nộp, hình thức/địa điểm (chỉ ghi nếu có).\n5. Cách ứng tuyển + URL chính xác.\n6. Lời kêu gọi hành động nhẹ nhàng, không gây áp lực.",
+    "writing_guide": "Viết tiếng Việt rõ ràng, thân thiện với người học. Khoảng 180–300 từ nếu đủ dữ kiện. Emoji vừa phải ở đầu các mục. Không suy diễn học bổng toàn phần hoặc cam kết đậu. Thông tin thiếu thì bỏ mục, không tự bổ sung. Không gọi đăng ký ngay nếu đã hết hạn.",
+    "samples": [],
+    "detection_keywords": ["học bổng", "scholarship", "fellowship", "financial aid"],
+    "is_active": true
+  },
+  {
+    "name": "Sự kiện & hội thảo",
+    "description": "Dùng cho workshop, webinar, talkshow hoặc hội thảo có thời gian tổ chức cụ thể; không phải chương trình đào tạo dài hạn.",
+    "structure": "1. Tiêu đề hấp dẫn nhưng chính xác.\n2. Giới thiệu vấn đề hoặc giá trị người tham dự nhận được.\n3. Nội dung nổi bật/diễn giả nếu có.\n4. Khối thông tin: thời gian, địa điểm/nền tảng, đối tượng, phí tham dự.\n5. URL đăng ký và hạn chót nếu nguồn có.\n6. CTA phù hợp với thời điểm.",
+    "writing_guide": "Tiếng Việt gần gũi, năng động, khoảng 150–250 từ. Dùng emoji để chia thông tin. Giữ nguyên thời gian, múi giờ và tên diễn giả. Không tự tạo diễn giả, chứng nhận hay tuyên bố miễn phí. Nếu sự kiện đã qua, tránh viết như đang mời đăng ký.",
+    "samples": [],
+    "detection_keywords": ["workshop", "webinar", "hội thảo", "talkshow", "sự kiện"],
+    "is_active": true
+  },
+  {
+    "name": "Khóa học & chương trình",
+    "description": "Dùng cho tuyển sinh khóa học, chương trình đào tạo hoặc trại học thuật. Ưu tiên dạng học bổng khi học bổng là trọng tâm, ưu tiên dạng sự kiện cho hội thảo một buổi.",
+    "structure": "1. Tiêu đề: tên chương trình + điểm nổi bật có căn cứ.\n2. Giới thiệu ngắn và nhóm người học phù hợp.\n3. Nội dung/quyền lợi nổi bật.\n4. Thông tin: đơn vị tổ chức, thời gian, hình thức, chi phí và điều kiện nếu có.\n5. Hạn đăng ký + đường dẫn.\n6. Lời mời tìm hiểu thêm.",
+    "writing_guide": "Viết tiếng Việt tự nhiên, có ích, không cường điệu. Khoảng 180–300 từ nếu nguồn đủ thông tin. Dùng 3–6 emoji. Không bịa chứng chỉ, cơ hội nghề nghiệp, học phí, số lượng chỗ hoặc ưu đãi. Không thêm thông tin liên hệ ngoài nguồn.",
+    "samples": [],
+    "detection_keywords": ["khóa học", "chương trình", "course", "training", "tuyển sinh"],
+    "is_active": true
+  }
+]

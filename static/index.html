@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Không gian viết bài Facebook theo đúng phong cách của từng dự án, với OpenAI và nguồn thông tin có căn cứ.">
+  <meta name="color-scheme" content="light">
+  <title>Content Studio — Viết đúng chất riêng</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..600;1,8..60,300..500&family=Inter:wght@300;400;500;600;700&subset=vietnamese&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css">
+  <script src="/static/js/app.js" type="module"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Đến nội dung chính</a>
+  <div id="login-screen" class="login-screen" hidden>
+    <div class="login-brand"><svg class="icon"><use href="/static/icons.svg#pen"></use></svg> Content Studio</div>
+    <form id="login-form" class="login-card">
+      <span class="eyebrow">KHÔNG GIAN SÁNG TẠO CỦA BẠN</span>
+      <h1>Chào mừng trở lại.</h1>
+      <p class="muted">Đăng nhập để quản lý dự án và viết những bài có chất riêng.</p>
+      <label for="login-password">Mật khẩu không gian làm việc</label>
+      <input id="login-password" type="password" autocomplete="current-password" required maxlength="512">
+      <p id="login-error" class="form-error" role="alert" hidden></p>
+      <button class="button primary wide" type="submit">Vào Studio <svg class="icon"><use href="/static/icons.svg#arrow"></use></svg></button>
+      <p class="small muted">Mật khẩu được quản trị viên cấu hình trên Render.</p>
+    </form>
+    <span class="login-footer">Bớt thao tác. Thêm cảm hứng.</span>
+  </div>
+
+  <div id="app-shell" class="app-shell" hidden>
+    <aside class="sidebar" aria-label="Điều hướng">
+      <a class="brand" href="/" aria-label="Content Studio trang chủ"><span class="brand-mark"><svg class="icon"><use href="/static/icons.svg#pen"></use></svg></span><span>content<span class="brand-light">studio</span><span class="brand-dot">.</span></span></a>
+      <div class="sidebar-label">KHÔNG GIAN LÀM VIỆC</div>
+      <nav class="nav">
+        <button class="nav-item active" data-view="writer" aria-current="page"><svg class="icon"><use href="/static/icons.svg#pen"></use></svg> Viết bài mới <span class="nav-key">N</span></button>
+        <button class="nav-item" data-view="formats"><svg class="icon"><use href="/static/icons.svg#layers"></use></svg> Dạng bài & hướng dẫn <span id="nav-format-count" class="nav-count">0</span></button>
+        <button class="nav-item" data-view="history"><svg class="icon"><use href="/static/icons.svg#history"></use></svg> Lịch sử bài viết</button>
+      </nav>
+      <div class="sidebar-note"><span class="note-symbol">✳</span><h3>Mỗi dự án, một chất riêng.</h3><p>Thêm hướng dẫn và bài mẫu. AI sẽ tìm đúng dạng bài để kể câu chuyện của bạn.</p><button id="sidebar-guide" class="text-button light">Thiết lập dạng bài <svg class="icon"><use href="/static/icons.svg#arrow"></use></svg></button></div>
+      <div class="sidebar-bottom"><span class="avatar">CS</span><div><strong>Content workspace</strong><span>Powered by OpenAI</span></div><button id="logout-button" class="icon-button light" aria-label="Đăng xuất" title="Đăng xuất"><svg class="icon"><use href="/static/icons.svg#logout"></use></svg></button></div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div class="project-switcher"><svg class="icon"><use href="/static/icons.svg#folder"></use></svg><label class="sr-only" for="project-select">Dự án hiện tại</label><select id="project-select"><option value="">Chọn dự án</option></select><button id="new-project-button" class="icon-button" title="Tạo dự án mới" aria-label="Tạo dự án mới"><svg class="icon"><use href="/static/icons.svg#plus"></use></svg></button></div>
+        <div class="topbar-right"><span id="connection-badge" class="connection-badge"><span class="status-dot"></span><span id="connection-text">Đang kết nối</span></span><button id="settings-button" class="icon-button" title="Trạng thái & cấu hình" aria-label="Trạng thái và cấu hình"><svg class="icon"><use href="/static/icons.svg#settings"></use></svg></button></div>
+      </header>
+
+      <main id="main" tabindex="-1">
+        <div id="setup-notice" class="notice" role="status" hidden></div>
+        <section id="no-project" class="onboarding" hidden>
+          <span class="onboarding-mark"><svg class="icon"><use href="/static/icons.svg#folder"></use></svg></span>
+          <span class="eyebrow">BẮT ĐẦU MỘT CÂU CHUYỆN MỚI</span><h1>Chất riêng bắt đầu từ dự án.</h1><p>Tạo một không gian cho thương hiệu, cộng đồng hoặc chiến dịch.<br>Mỗi dự án có bộ dạng bài và hướng dẫn của riêng mình.</p><button id="first-project-button" class="button primary"><svg class="icon"><use href="/static/icons.svg#plus"></use></svg> Tạo dự án đầu tiên</button>
+          <div class="onboarding-steps"><span><b>01</b> Tạo dự án</span><span><b>02</b> Thêm dạng bài & bài mẫu</span><span><b>03</b> Gửi nguồn, nhận bài viết</span></div>
+        </section>
+
+        <section id="view-writer" class="view" hidden>
+          <div class="page-heading"><div><div class="eyebrow"><span class="tiny-spark">✦</span> TỪ THÔNG TIN ĐẾN CÂU CHUYỆN</div><h1>Viết đúng <span class="accent">chất riêng.</span></h1><p>Đưa vào một nguồn thông tin. Nhận lại bài viết mang phong cách của bạn.</p></div><span class="heading-label">CONTENT STUDIO</span></div>
+          <div class="writing-grid">
+            <section class="panel source-panel" aria-labelledby="source-heading">
+              <div class="panel-heading"><div class="step-number">01</div><div><h2 id="source-heading">Nguồn cảm hứng</h2><p>Thông tin chương trình bạn muốn chia sẻ</p></div></div>
+              <form id="generate-form">
+                <div class="source-tabs" role="tablist" aria-label="Loại nguồn"><button id="url-tab" type="button" role="tab" aria-controls="url-source" aria-selected="true" data-source="url" class="source-tab active"><svg class="icon"><use href="/static/icons.svg#link"></use></svg> Website</button><button id="facebook-tab" type="button" role="tab" aria-controls="facebook-source" aria-selected="false" data-source="facebook_paste" class="source-tab"><svg class="icon"><use href="/static/icons.svg#facebook"></use></svg> Nội dung Facebook</button></div>
+                <div id="url-source" role="tabpanel" aria-labelledby="url-tab">
+                  <label for="source-url">Đường dẫn chương trình</label><input id="source-url" type="url" placeholder="https://website.com/chuong-trinh" maxlength="2048" autocomplete="url">
+                  <p class="input-hint">Dán link trang thông tin công khai, không phải link Facebook.</p>
+                  <label class="checkbox-row"><input id="follow-related" type="checkbox" checked><span>Đọc thêm các trang liên quan<span class="checkbox-hint">Tối đa 3 trang cùng website để bổ sung thông tin.</span></span></label>
+                  <div class="source-tip"><svg class="icon"><use href="/static/icons.svg#info"></use></svg><p>Studio đọc nội dung trang và tìm thông tin hữu ích. Trang cần đăng nhập, JavaScript, PDF hoặc bị chặn có thể cần bạn dán văn bản.</p></div>
+                </div>
+                <div id="facebook-source" role="tabpanel" aria-labelledby="facebook-tab" hidden><label for="source-text">Nội dung bài đăng</label><textarea id="source-text" rows="9" maxlength="50000" placeholder="Dán toàn bộ nội dung bài đăng Facebook vào đây…"></textarea><div class="input-meta"><span>Không cần kết nối tài khoản Facebook</span><span id="source-char-count">0 / 50.000</span></div><p class="input-hint">Bạn cũng có thể dán văn bản từ website không đọc được.</p></div>
+                <div class="auto-format"><span class="auto-format-icon"><svg class="icon"><use href="/static/icons.svg#layers"></use></svg></span><div><strong>AI tự chọn dạng bài phù hợp</strong><span id="auto-format-description">Dựa trên các dạng bài đang bật trong dự án</span></div><span class="pill mint">Tự động</span></div>
+                <details class="extra-instructions"><summary>Yêu cầu thêm <span class="muted small">(không bắt buộc)</span><svg class="icon"><use href="/static/icons.svg#plus"></use></svg></summary><label for="additional-instructions" class="sr-only">Yêu cầu bổ sung</label><textarea id="additional-instructions" rows="3" maxlength="3000" placeholder="Ví dụ: Viết ngắn hơn, tập trung vào quyền lợi của sinh viên…"></textarea></details>
+                <p id="generate-error" class="form-error" role="alert" hidden></p>
+                <button id="generate-button" class="button primary wide generate-button" type="submit"><svg class="icon"><use href="/static/icons.svg#pen"></use></svg><span>Phân tích & viết bài</span><svg class="icon end-icon"><use href="/static/icons.svg#arrow"></use></svg></button>
+                <p class="generation-footnote">Thông tin có nguồn. Giọng văn có gu.</p>
+              </form>
+            </section>
+
+            <section id="result-panel" class="panel result-panel" aria-labelledby="result-heading">
+              <div class="panel-heading result-heading"><div class="step-number soft">02</div><div><h2 id="result-heading">Bài viết của bạn</h2><p>Văn bản thuần & emoji, sẵn sàng chia sẻ</p></div><span id="result-state" class="pill neutral">Bản nháp</span></div>
+              <div id="result-empty" class="result-empty"><div class="empty-art" aria-hidden="true"><div class="art-dot dot-one"></div><div class="art-paper"><span class="art-spark">✦</span><span class="art-line"></span><span class="art-line short"></span><span class="art-line"></span><span class="art-line medium"></span><span class="art-sign">made for your story</span></div><div class="art-dot dot-two"></div><span class="floating-spark">✳</span></div><h3>Một câu chuyện hay đang chờ.</h3><p>Thêm nguồn thông tin bên trái.<br>Studio sẽ chọn dạng bài và viết phần còn lại.</p><div class="empty-tags"><span>Đúng format</span><span>Đúng phong cách</span><span>Có căn cứ</span></div></div>
+              <div id="result-loading" class="result-loading" role="status" hidden><span class="loading-orbit"><svg class="icon"><use href="/static/icons.svg#pen"></use></svg></span><h3>Đang kết nối những ý tưởng…</h3><p>Đọc nguồn, chọn dạng bài và viết theo hướng dẫn của bạn.</p><span class="small muted">Thường mất 30–120 giây; nguồn dài có thể lâu hơn.</span></div>
+              <div id="result-content" hidden>
+                <div class="selected-format"><svg class="icon"><use href="/static/icons.svg#layers"></use></svg><span id="selected-format-name"></span><span class="small muted">AI đề xuất</span></div>
+                <p id="selection-reason" class="selection-reason"></p>
+                <label class="sr-only" for="post-editor">Nội dung bài viết, có thể chỉnh sửa</label><textarea id="post-editor" spellcheck="false" maxlength="20000" aria-describedby="editor-hint"></textarea>
+                <div class="editor-meta"><span id="editor-hint">Có thể chỉnh sửa trực tiếp</span><span id="post-char-count">0 ký tự</span></div>
+                <div class="result-actions"><button id="copy-button" class="button primary" type="button"><svg class="icon"><use href="/static/icons.svg#copy"></use></svg> Sao chép bài viết</button><button id="save-post-button" class="button secondary" type="button" disabled><svg class="icon"><use href="/static/icons.svg#save"></use></svg> Lưu sửa đổi</button><button id="download-button" class="icon-button bordered" type="button" title="Tải văn bản .txt" aria-label="Tải văn bản .txt"><svg class="icon"><use href="/static/icons.svg#download"></use></svg></button></div>
+                <div id="post-warnings" class="post-warnings" hidden></div>
+                <details class="evidence-details"><summary>Nguồn & thông tin đã trích xuất <svg class="icon"><use href="/static/icons.svg#chevron"></use></svg></summary><div id="evidence-list"></div></details>
+              </div>
+            </section>
+          </div>
+          <div class="bottom-note"><svg class="icon"><use href="/static/icons.svg#info"></use></svg> AI hỗ trợ viết, bạn giữ quyền biên tập. Luôn kiểm tra thời gian, chi phí và điều kiện trước khi đăng.</div>
+        </section>
+
+        <section id="view-formats" class="view" hidden>
+          <div class="page-heading"><div><span class="eyebrow">THIẾT LẬP CHẤT RIÊNG</span><h1>Dạng bài <span class="accent">& hướng dẫn.</span></h1><p>Càng rõ cách viết, AI càng hiểu phong cách của bạn.</p></div><button id="add-format-button" class="button primary"><svg class="icon"><use href="/static/icons.svg#plus"></use></svg> Thêm dạng bài</button></div>
+          <div class="project-guide-card"><div class="guide-icon"><svg class="icon"><use href="/static/icons.svg#folder"></use></svg></div><div class="guide-copy"><span class="eyebrow">ÁP DỤNG CHO TOÀN DỰ ÁN</span><h2 id="guide-project-name"></h2><p id="guide-project-description"></p></div><button id="edit-project-button" class="button secondary">Sửa dự án & hướng dẫn</button></div>
+          <div class="section-heading"><h2>Bộ dạng bài <span id="formats-count" class="count-label">0</span></h2><span class="muted small">AI chỉ lựa chọn trong các dạng đang bật</span></div>
+          <div id="formats-empty" class="empty-state" hidden><svg class="icon"><use href="/static/icons.svg#layers"></use></svg><h3>Định hình bài viết đầu tiên.</h3><p>Thêm cấu trúc, hướng dẫn và bài mẫu của bạn,<br>hoặc bắt đầu với 3 dạng bài gợi ý có thể chỉnh sửa.</p><button id="starter-formats-button" class="button secondary">Dùng bộ dạng bài gợi ý</button></div>
+          <div id="format-grid" class="format-grid"></div>
+          <div class="tip-banner"><span>✦</span><p><strong>Mẹo nhỏ:</strong> Dán 2–5 bài mẫu thực tế cho mỗi dạng để AI học giọng văn. Mô tả rõ “khi nào dùng” giúp AI phân loại chính xác hơn.</p></div>
+        </section>
+
+        <section id="view-history" class="view" hidden>
+          <div class="page-heading"><div><span class="eyebrow">MỌI CÂU CHUYỆN ĐƯỢC LƯU LẠI</span><h1>Thư viện <span class="accent">bài viết.</span></h1><p>Xem lại, chỉnh sửa và sử dụng những bài đã tạo trong dự án này.</p></div><button id="history-new-button" class="button primary"><svg class="icon"><use href="/static/icons.svg#plus"></use></svg> Viết bài mới</button></div>
+          <div id="history-empty" class="empty-state" hidden><svg class="icon"><use href="/static/icons.svg#history"></use></svg><h3>Trang đầu tiên còn để trống.</h3><p>Những bài viết được tạo thành công sẽ tự động xuất hiện ở đây.</p></div>
+          <div id="history-list" class="history-list"></div><div id="history-pagination" class="pagination" hidden><button id="history-prev" class="button secondary">← Trang trước</button><span id="history-page-label" class="muted small"></span><button id="history-next" class="button secondary">Trang sau →</button></div>
+        </section>
+        <footer class="workspace-footer"><span>contentstudio<span class="accent">.</span></span><span>Viết ít thao tác hơn. Kể nhiều câu chuyện hơn.</span></footer>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="project-dialog" class="modal" aria-labelledby="project-dialog-title">
+    <form id="project-form"><div class="modal-header"><div><span class="eyebrow">KHÔNG GIAN LÀM VIỆC</span><h2 id="project-dialog-title">Tạo dự án mới</h2></div><button type="button" class="icon-button" data-close-dialog aria-label="Đóng"><svg class="icon"><use href="/static/icons.svg#close"></use></svg></button></div><div class="modal-body"><label for="project-name">Tên dự án <span class="required">*</span></label><input id="project-name" required maxlength="120" placeholder="Ví dụ: Cộng đồng cơ hội sinh viên"><label for="project-description">Mô tả & đối tượng</label><textarea id="project-description" rows="3" maxlength="2000" placeholder="Dự án chia sẻ điều gì? Viết cho ai?"></textarea><label for="project-guide">Hướng dẫn chung</label><textarea id="project-guide" rows="5" maxlength="12000" placeholder="Giọng văn, cách xưng hô, nguyên tắc dùng emoji, thông tin cố định của dự án…"></textarea><p class="input-hint">Hướng dẫn này áp dụng cho mọi dạng bài trong dự án. Không nhập API key hoặc thông tin bí mật.</p><p id="project-form-error" class="form-error" role="alert" hidden></p></div><div class="modal-footer"><button id="delete-project-button" type="button" class="button danger-text" hidden>Xóa dự án</button><span class="flex-spacer"></span><button type="button" class="button secondary" data-close-dialog>Hủy</button><button type="submit" class="button primary">Lưu dự án</button></div></form>
+  </dialog>
+
+  <dialog id="format-dialog" class="modal large-modal" aria-labelledby="format-dialog-title">
+    <form id="format-form"><div class="modal-header"><div><span class="eyebrow">BỘ QUY TẮC CHO AI</span><h2 id="format-dialog-title">Thêm dạng bài</h2></div><button type="button" class="icon-button" data-close-dialog aria-label="Đóng"><svg class="icon"><use href="/static/icons.svg#close"></use></svg></button></div><div class="modal-body"><div class="form-columns"><div><label for="format-name">Tên dạng bài <span class="required">*</span></label><input id="format-name" required maxlength="120" placeholder="Ví dụ: Cơ hội học bổng"></div><div><label for="format-keywords">Từ khóa nhận diện</label><input id="format-keywords" maxlength="2400" placeholder="học bổng, scholarship, tài trợ"></div></div><label for="format-description">Khi nào dùng dạng bài này?</label><textarea id="format-description" rows="2" maxlength="2000" placeholder="Mô tả mục đích, tiêu chí và điểm khác biệt với các dạng bài khác…"></textarea><label for="format-structure">Cấu trúc / format bài viết <span class="required">*</span></label><textarea id="format-structure" required rows="5" maxlength="12000" placeholder="1. Tiêu đề + emoji&#10;2. Giới thiệu cơ hội&#10;3. Quyền lợi, điều kiện, thời gian&#10;4. Link đăng ký + CTA"></textarea><label for="format-guide">Hướng dẫn viết chi tiết</label><textarea id="format-guide" rows="4" maxlength="12000" placeholder="Độ dài, giọng văn, cách dùng emoji, điều cần tránh…"></textarea><div class="section-heading samples-heading"><div><h3>Bài viết mẫu</h3><p class="input-hint">Dán nội dung mẫu Facebook. Tối đa 8 mẫu, mỗi mẫu 10.000 ký tự.</p></div><button id="add-sample-button" type="button" class="button secondary small-button"><svg class="icon"><use href="/static/icons.svg#plus"></use></svg> Thêm mẫu</button></div><div id="samples-list"></div><label class="checkbox-row"><input id="format-active" type="checkbox" checked><span>Cho phép AI chọn dạng bài này</span></label><p id="format-form-error" class="form-error" role="alert" hidden></p></div><div class="modal-footer"><span class="small muted">Lưu riêng cho dự án hiện tại</span><span class="flex-spacer"></span><button type="button" class="button secondary" data-close-dialog>Hủy</button><button type="submit" class="button primary">Lưu dạng bài</button></div></form>
+  </dialog>
+
+  <dialog id="settings-dialog" class="modal"><div class="modal-header"><div><span class="eyebrow">KẾT NỐI & TRIỂN KHAI</span><h2>Trạng thái Studio</h2></div><button type="button" class="icon-button" data-close-dialog aria-label="Đóng"><svg class="icon"><use href="/static/icons.svg#close"></use></svg></button></div><div class="modal-body"><div id="settings-status"></div><div class="settings-help"><h3>Cấu hình an toàn trên máy chủ</h3><p>Thiết lập <code>OPENAI_API_KEY</code>, <code>DATABASE_URL</code>, <code>APP_PASSWORD</code>, <code>SESSION_SECRET</code> và <code>APP_ORIGIN</code> trong Render → Environment.</p><p>Supabase: dùng kết nối <strong>Session pooler</strong> (cổng 5432). Không đưa khóa API hoặc chuỗi kết nối vào giao diện, mã frontend hay GitHub.</p><p>Tham khảo <code>README.md</code> trong dự án để chạy local và deploy. Nội dung nguồn, hướng dẫn và bài mẫu được gửi đến OpenAI khi viết bài.</p></div></div><div class="modal-footer"><button id="refresh-status-button" class="button secondary">Kiểm tra lại</button><span class="flex-spacer"></span><button class="button primary" data-close-dialog>Đã hiểu</button></div></dialog>
+
+  <dialog id="confirm-dialog" class="modal confirm-modal" aria-labelledby="confirm-title" aria-describedby="confirm-message"><div class="modal-body"><h2 id="confirm-title"></h2><p id="confirm-message" class="muted"></p></div><div class="modal-footer"><button id="confirm-cancel" class="button secondary">Hủy</button><button id="confirm-ok" class="button danger">Xóa</button></div></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <div id="boot-error" class="boot-error" role="alert" hidden><h1>Chưa kết nối được Studio.</h1><p id="boot-error-message"></p><button id="retry-boot" class="button primary">Thử lại</button></div>
+  <noscript><div class="boot-error">Vui lòng bật JavaScript để sử dụng Content Studio.</div></noscript>
+</body>
+</html>

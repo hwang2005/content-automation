@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 from bs4 import BeautifulSoup
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI, OpenAIError, RateLimitError
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from backend.config import Settings
 from backend.extractor import SourcePage, plain
@@ -17,14 +17,18 @@ class WritingError(Exception):
         super().__init__(message)
 
 
-class Fact(BaseModel):
+class StructuredResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class Fact(StructuredResult):
     label: str
     value: str
     source_id: str
     quote: str
 
 
-class Analysis(BaseModel):
+class Analysis(StructuredResult):
     format_id: str
     reason: str
     confidence: float
@@ -32,7 +36,7 @@ class Analysis(BaseModel):
     warnings: list[str]
 
 
-class Draft(BaseModel):
+class Draft(StructuredResult):
     content: str
     warnings: list[str]
 
@@ -78,6 +82,7 @@ class AIWriter:
         self.client = (
             AsyncOpenAI(
                 api_key=settings.openai_api_key.get_secret_value(),
+                base_url=settings.ai_base_url,
                 timeout=settings.openai_timeout_seconds,
                 max_retries=1,
             )
@@ -88,35 +93,109 @@ class AIWriter:
         if self.client:
             await self.client.close()
 
+    @staticmethod
+    def decode_result(schema, content: str):
+        if not isinstance(content, str) or not content.strip():
+            raise WritingError("AI trả về nội dung rỗng hoặc không đúng định dạng JSON.")
+        # Some compatible providers wrap JSON in a code fence. Only unwrap a full
+        # fence; never extract an arbitrary object from prose or partial output.
+        content = content.strip()
+        fence = re.fullmatch(r"```(?:json)?\s*\n(.*?)\n\s*```", content, re.DOTALL | re.IGNORECASE)
+        if fence:
+            content = fence[1].strip()
+        return schema.model_validate_json(content, strict=True)
+
+    async def parse_responses(self, schema, messages: list[dict], max_tokens: int):
+        if self.settings.openai_response_format == "json_schema":
+            response = await self.client.responses.parse(
+                model=self.settings.openai_model, input=messages, text_format=schema,
+                max_output_tokens=max_tokens, store=False,
+            )
+            parsed = response.output_parsed
+        else:
+            options = {}
+            if self.settings.openai_response_format == "json_object":
+                options["text"] = {"format": {"type": "json_object"}}
+            response = await self.client.responses.create(
+                model=self.settings.openai_model, input=messages,
+                max_output_tokens=max_tokens, store=False, **options,
+            )
+            parsed = None
+        if response.status != "completed":
+            raise WritingError("AI chưa hoàn thành phản hồi hoặc đã hết giới hạn token. Hãy điều chỉnh mô hình/nguồn và thử lại.")
+        if any(
+            getattr(part, "type", None) == "refusal"
+            for item in response.output or []
+            for part in getattr(item, "content", []) or []
+        ):
+            raise WritingError("AI từ chối xử lý nội dung này. Hãy kiểm tra nội dung và thử lại.")
+        if self.settings.openai_response_format != "json_schema":
+            parsed = self.decode_result(schema, response.output_text)
+        if parsed is None:
+            raise WritingError("AI không trả về kết quả có cấu trúc hợp lệ. Hãy kiểm tra mô hình và định dạng phản hồi.")
+        usage = response.usage
+        return parsed, (usage.input_tokens or 0) if usage else 0, (usage.output_tokens or 0) if usage else 0
+
+    async def parse_chat_completions(self, schema, messages: list[dict], max_tokens: int):
+        options = {self.settings.openai_chat_token_parameter: max_tokens}
+        if self.settings.openai_response_format == "json_schema":
+            options["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema.__name__, "strict": True,
+                    "schema": schema.model_json_schema(),
+                },
+            }
+        elif self.settings.openai_response_format == "json_object":
+            options["response_format"] = {"type": "json_object"}
+        # Text mode deliberately omits response_format for minimal compatible APIs.
+        # Do not send Responses-only fields (input/text/store/max_output_tokens).
+        response = await self.client.chat.completions.create(
+            model=self.settings.openai_model, messages=messages, **options,
+        )
+        if not response.choices:
+            raise WritingError("Nhà cung cấp AI không trả về lựa chọn nội dung (choices).")
+        choice = response.choices[0]
+        message = choice.message
+        if message and message.refusal:
+            raise WritingError("AI từ chối xử lý nội dung này. Hãy kiểm tra nội dung và thử lại.")
+        if choice.finish_reason != "stop":
+            raise WritingError("AI chưa hoàn thành phản hồi hoặc đã hết giới hạn token. Hãy điều chỉnh mô hình/nguồn và thử lại.")
+        if not message or message.tool_calls or getattr(message, "function_call", None):
+            raise WritingError("AI trả về lời gọi công cụ thay vì nội dung JSON. Hãy kiểm tra cấu hình nhà cung cấp.")
+        parsed = self.decode_result(schema, message.content)
+        usage = response.usage
+        return parsed, (usage.prompt_tokens or 0) if usage else 0, (usage.completion_tokens or 0) if usage else 0
+
     async def parse(self, schema, system: str, payload: dict, max_tokens: int):
         if not self.client:
             raise WritingError("Chưa cấu hình OPENAI_API_KEY trên máy chủ.", 503)
-        try:
-            response = await self.client.responses.parse(
-                model=self.settings.openai_model,
-                input=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                ],
-                text_format=schema,
-                max_output_tokens=max_tokens,
-                store=False,
+        if self.settings.openai_response_format != "json_schema":
+            system += (
+                "\n\nChỉ trả về một JSON object hợp lệ theo JSON Schema sau. "
+                "Không thêm giải thích, Markdown hoặc code fence. "
+                "Tất cả trường bắt buộc phải có; không thêm trường khác.\n"
+                + json.dumps(schema.model_json_schema(), ensure_ascii=False)
             )
-            if response.status != "completed" or response.output_parsed is None:
-                raise WritingError("AI từ chối hoặc chưa hoàn thành phản hồi. Hãy kiểm tra nội dung và thử lại.")
-            usage = response.usage
-            return response.output_parsed, (usage.input_tokens if usage else 0), (usage.output_tokens if usage else 0)
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ]
+        try:
+            if self.settings.ai_api_mode == "chat_completions":
+                return await self.parse_chat_completions(schema, messages, max_tokens)
+            return await self.parse_responses(schema, messages, max_tokens)
         except RateLimitError:
-            raise WritingError("OpenAI đang giới hạn yêu cầu hoặc tài khoản đã hết hạn mức. Kiểm tra billing/quota rồi thử lại.", 429) from None
+            raise WritingError("Nhà cung cấp AI đang giới hạn yêu cầu hoặc tài khoản đã hết hạn mức. Kiểm tra billing/quota rồi thử lại.", 429) from None
         except APIConnectionError:
-            raise WritingError("Không kết nối được OpenAI hoặc quá thời gian chờ. Vui lòng thử lại.", 504) from None
+            raise WritingError("Không kết nối được máy chủ AI hoặc quá thời gian chờ. Kiểm tra OPENAI_BASE_URL và mạng, sau đó thử lại.", 504) from None
         except APIStatusError as error:
             if error.status_code in {401, 403}:
-                raise WritingError("OpenAI API key không hợp lệ hoặc không có quyền sử dụng mô hình đã chọn.", 503) from None
-            if error.status_code == 400 or error.status_code == 404:
-                raise WritingError("Kiểm tra OPENAI_MODEL: cần mô hình có quyền truy cập, hỗ trợ Responses API và Structured Outputs.", 503) from None
-            raise WritingError("OpenAI gặp lỗi dịch vụ. Vui lòng thử lại sau.") from None
-        except (OpenAIError, ValidationError, ValueError):
+                raise WritingError("API key AI không hợp lệ hoặc không có quyền sử dụng mô hình đã chọn tại nhà cung cấp này.", 503) from None
+            if error.status_code in {400, 404, 405, 422, 501}:
+                raise WritingError("Kiểm tra OPENAI_BASE_URL, OPENAI_MODEL, OPENAI_API_MODE và OPENAI_RESPONSE_FORMAT theo khả năng nhà cung cấp; với Chat Completions kiểm tra thêm OPENAI_CHAT_TOKEN_PARAMETER.", 503) from None
+            raise WritingError("Nhà cung cấp AI gặp lỗi dịch vụ. Vui lòng thử lại sau.") from None
+        except (OpenAIError, ValidationError, ValueError, TypeError, AttributeError):
             raise WritingError("Không đọc được kết quả có cấu trúc từ AI. Vui lòng thử lại.") from None
 
     async def write(self, project: dict, formats: list[dict], sources: list[SourcePage], additional: str) -> WritingResult:

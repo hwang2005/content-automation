@@ -21,5 +21,12 @@ services:
         sync: false
       - key: OPENAI_MODEL
         value: gpt-5-mini
+      # Optional: set OPENAI_BASE_URL in Render Environment for another provider.
+      - key: OPENAI_API_MODE
+        value: auto
+      - key: OPENAI_RESPONSE_FORMAT
+        value: json_schema
+      - key: OPENAI_CHAT_TOKEN_PARAMETER
+        value: max_tokens
       - key: APP_ORIGIN
         sync: false

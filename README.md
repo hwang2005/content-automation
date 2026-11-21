@@ -1,6 +1,6 @@
 # Content Studio
 
-Website viết bài Facebook theo **đúng dự án, đúng dạng bài, đúng hướng dẫn**. Backend FastAPI phục vụ luôn giao diện HTML/CSS/JavaScript; triển khai một Web Service trên **Render**, lưu dữ liệu ở **Supabase PostgreSQL**, sử dụng **OpenAI API**.
+Website viết bài Facebook theo **đúng dự án, đúng dạng bài, đúng hướng dẫn**. Backend FastAPI phục vụ luôn giao diện HTML/CSS/JavaScript; triển khai một Web Service trên **Render**, lưu dữ liệu ở **Supabase PostgreSQL**, sử dụng **OpenAI hoặc API OpenAI-compatible** với `base_url` tùy chỉnh.
 
 ## Chức năng
 
@@ -26,7 +26,7 @@ python -m venv .venv
 Copy-Item .env.example .env
 ```
 
-Mở `.env`, điền `OPENAI_API_KEY` của bạn. Nên đặt thêm `APP_PASSWORD` và một `SESSION_SECRET` ngẫu nhiên. **Không gửi key vào cuộc trò chuyện hoặc commit lên GitHub.**
+Mở `.env`, điền `OPENAI_API_KEY` của OpenAI hoặc nhà cung cấp tương thích. Nếu dùng dịch vụ khác, đặt thêm `OPENAI_BASE_URL` và `OPENAI_MODEL` theo phần cấu hình AI bên dưới. Nên đặt thêm `APP_PASSWORD` và một `SESSION_SECRET` ngẫu nhiên. **Không gửi key vào cuộc trò chuyện hoặc commit lên GitHub.**
 
 ```powershell
 .\.venv\Scripts\python.exe -m backend.migrate
@@ -46,9 +46,38 @@ cp .env.example .env
 .venv/bin/python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Nếu `DATABASE_URL` để trống và `APP_ENV=development`, ứng dụng dùng SQLite trong `data/local.db` **chỉ để phát triển**. Không cần Supabase để xem giao diện, tạo dự án hoặc chỉnh dạng bài. Chưa có OpenAI key vẫn quản lý dữ liệu được nhưng không viết bài được.
+Nếu `DATABASE_URL` để trống và `APP_ENV=development`, ứng dụng dùng SQLite trong `data/local.db` **chỉ để phát triển**. Không cần Supabase để xem giao diện, tạo dự án hoặc chỉnh dạng bài. Chưa có API key AI vẫn quản lý dữ liệu được nhưng không viết bài được.
 
 Ứng dụng **không chấp nhận SQLite hoặc thiếu DATABASE_URL trong production**. Dữ liệu SQLite thử nghiệm không tự chuyển sang Supabase.
+
+### Cấu hình AI: OpenAI hoặc `base_url` bên thứ ba
+
+**Dùng OpenAI như trước:** để `OPENAI_BASE_URL` trống, `OPENAI_API_MODE=auto`, `OPENAI_RESPONSE_FORMAT=json_schema`. Ứng dụng dùng `https://api.openai.com/v1/responses` và mô hình từ `OPENAI_MODEL` (mặc định `gpt-5-mini`).
+
+**Dùng API OpenAI-compatible:** điền trong `.env` hoặc **Render → Environment**:
+
+```dotenv
+OPENAI_API_KEY=YOUR_PROVIDER_API_KEY
+OPENAI_BASE_URL=https://your-provider.example/v1
+OPENAI_MODEL=YOUR_PROVIDER_MODEL_ID
+OPENAI_API_MODE=chat_completions
+OPENAI_RESPONSE_FORMAT=json_schema
+OPENAI_CHAT_TOKEN_PARAMETER=max_tokens
+```
+
+- `OPENAI_BASE_URL` là **URL gốc API** theo tài liệu nhà cung cấp; ví dụ endpoint đầy đủ là `https://host.example/api/v1/chat/completions` thì base URL là `https://host.example/api/v1`. Không nhập `/chat/completions` hoặc `/responses` ở cuối. Không tự nối thêm `/v1` nếu nhà cung cấp dùng prefix khác.
+- `OPENAI_API_KEY` phải là key của **đúng nhà cung cấp ở base URL**. Không gửi key OpenAI cho một dịch vụ không đáng tin. Tham số URL query, thông tin đăng nhập trong URL và fragment không được chấp nhận.
+- `OPENAI_API_MODE=auto`: base URL có hostname `api.openai.com` dùng **Responses**, các hostname khác dùng **Chat Completions**. Đặt `responses` nếu proxy của bạn hỗ trợ `/responses`; đặt `chat_completions` để dùng `/chat/completions` rõ ràng.
+- Chọn khả năng định dạng của model/API:
+  - **`json_schema`** (mặc định, khuyên dùng): gửi JSON Schema strict cho nhà cung cấp hỗ trợ Structured Outputs.
+  - **`json_object`**: dùng JSON mode nếu nhà cung cấp không hỗ trợ JSON Schema.
+  - **`text`**: không gửi `response_format`; yêu cầu JSON qua prompt, dành cho endpoint chỉ hỗ trợ text. Chế độ này vẫn cần model sinh đúng JSON theo schema, **không phải chấp nhận bài viết text tự do làm dữ liệu phân tích**.
+- Với Chat Completions, `OPENAI_CHAT_TOKEN_PARAMETER=max_tokens` phù hợp nhiều API tương thích. Nếu model yêu cầu tên tham số mới hơn (ví dụ một số model reasoning của OpenAI), đặt `max_completion_tokens`. Với Responses, ứng dụng dùng `max_output_tokens` và bỏ qua biến này.
+- Kết quả Chat Completions được đọc từ `choices[0].message.content`; Responses dùng kết quả message của `/responses`. JSON được kiểm tra bằng Pydantic, vẫn kiểm tra dạng bài thuộc dự án và trích dẫn nguồn trước khi lưu. Phản hồi bị cắt ngắn, từ chối, sai cấu trúc hoặc lời gọi công cụ sẽ báo lỗi.
+- Ứng dụng **không tự chuyển endpoint/định dạng và gọi lại** khi provider báo không hỗ trợ để tránh phát sinh thêm yêu cầu/chi phí ngoài ý muốn. Khi gặp lỗi 400/404/422, kiểm tra các biến trên với tài liệu dịch vụ. Retry lỗi kết nối/429/5xx vẫn theo OpenAI SDK (tối đa 1 lần).
+- Dùng HTTPS cho nhà cung cấp từ xa. Có thể dùng HTTP cho server AI local, ví dụ `http://127.0.0.1:1234/v1`; key giả chỉ dùng nếu server local cho phép. Khi deploy Render, `localhost` trỏ vào máy chủ Render, **không phải máy cá nhân**.
+- Nội dung nguồn, hướng dẫn và mẫu được gửi đến nhà cung cấp bạn chọn; xem chính sách dữ liệu/chi phí của họ. Cấu hình chỉ ở backend, không cho người dùng chọn URL tùy ý qua form và không gửi base URL hoặc key xuống frontend. API không dùng chuẩn OpenAI (ví dụ endpoint riêng yêu cầu `api-version` trong query, auth/header riêng) chưa được hỗ trợ chỉ bằng base URL.
+- Sau khi thay đổi biến môi trường, khởi động lại/redeploy backend. Không cần sửa SQL hoặc database. Trong **Trạng thái Studio**, bạn có thể xem giao thức, model và định dạng đang dùng.
 
 ## 2. Tạo database Supabase
 
@@ -118,8 +147,12 @@ Session pooler giúp kết nối từ môi trường IPv4. Direct connection c�
 |---|---|
 | `APP_ENV` | `production` |
 | `PYTHON_VERSION` | `3.12.12` (đồng bộ với `.python-version`) |
-| `OPENAI_API_KEY` | Key OpenAI của bạn |
-| `OPENAI_MODEL` | Mặc định `gpt-5-mini`; có thể đổi sang model bạn có quyền sử dụng, hỗ trợ Responses API + Structured Outputs |
+| `OPENAI_API_KEY` | Key của OpenAI hoặc nhà cung cấp OpenAI-compatible đã chọn |
+| `OPENAI_BASE_URL` | Tùy chọn; để trống dùng OpenAI. Dịch vụ khác: URL gốc API theo tài liệu nhà cung cấp |
+| `OPENAI_MODEL` | ID model chính xác của nhà cung cấp; mặc định `gpt-5-mini` cho OpenAI |
+| `OPENAI_API_MODE` | `auto` (mặc định), `responses` hoặc `chat_completions` |
+| `OPENAI_RESPONSE_FORMAT` | `json_schema` (mặc định), `json_object` hoặc `text` |
+| `OPENAI_CHAT_TOKEN_PARAMETER` | `max_tokens` (mặc định) hoặc `max_completion_tokens`, chỉ cho Chat Completions |
 | `DATABASE_URL` | Supabase Session pooler connection string, dùng SSL |
 | `APP_PASSWORD` | Mật khẩu workspace đủ mạnh, tối thiểu 12 ký tự |
 | `SESSION_SECRET` | Chuỗi ngẫu nhiên tối thiểu 32 ký tự, không dùng lại API key |
@@ -137,10 +170,10 @@ Nếu dùng custom domain, cập nhật `APP_ORIGIN` về origin người dùng 
 
 - Render Free Web Service có thể ngủ sau 15 phút không hoạt động; lần truy cập sau cần khoảng một phút khởi động lại. Dữ liệu vẫn ở Supabase, không phụ thuộc ổ đĩa Render.
 - Không dùng database miễn phí có thời hạn như giải pháp lưu trữ lâu dài mà chưa đọc giới hạn. Các gói và chính sách Supabase/Render có thể thay đổi; kiểm tra Dashboard và sao lưu định kỳ. Không coi free tier là cam kết ổn định hoặc backup tự động.
-- OpenAI API tính phí riêng, không đi kèm gói ChatGPT. Đặt budget/quota ở tài khoản OpenAI.
+- API AI tính phí theo nhà cung cấp bạn chọn; OpenAI API không đi kèm gói ChatGPT. Đặt budget/quota ở tài khoản dịch vụ.
 - Ứng dụng mặc định giới hạn **30 yêu cầu tạo bài/giờ/workspace**, tối đa **2 bài đồng thời**. Giới hạn này lưu trong RAM, reset khi restart. Giữ `--workers 1`; trước khi tăng worker/replica cần chuyển rate limit và hàng đợi sang Redis/database.
-- Web service xử lý tạo bài trực tiếp, chưa có durable background queue. Đóng tab/mất mạng/redeploy có thể khiến client không nhận kết quả. **Kiểm tra lịch sử trước khi bấm lại**, vì OpenAI vẫn có thể đã tính phí. Muốn bảo đảm phục hồi qua restart cần bổ sung job queue + idempotency.
-- `/health` là liveness. Màn hình **Trạng thái Studio** kiểm tra truy vấn database; trạng thái OpenAI chỉ xác nhận key đã được cấu hình, không xác nhận billing/model permission bằng cách phát sinh request có phí.
+- Web service xử lý tạo bài trực tiếp, chưa có durable background queue. Đóng tab/mất mạng/redeploy có thể khiến client không nhận kết quả. **Kiểm tra lịch sử trước khi bấm lại**, vì nhà cung cấp AI vẫn có thể đã tính phí. Muốn bảo đảm phục hồi qua restart cần bổ sung job queue + idempotency.
+- `/health` là liveness. Màn hình **Trạng thái Studio** kiểm tra truy vấn database; trạng thái AI chỉ xác nhận key đã được cấu hình và hiển thị giao thức/định dạng, không xác nhận billing/model permission bằng cách phát sinh request có phí.
 
 ## 4. Sử dụng
 
@@ -160,7 +193,7 @@ AI không suy ra các dạng bài mới từ một thư viện mẫu chưa phân
 - Chặn IP private, loopback, link-local, metadata, port lạ, thông tin đăng nhập trong URL và redirect nguy hiểm. DNS resolver kiểm tra địa chỉ thực khi kết nối để giảm nguy cơ SSRF/DNS rebinding.
 - Nội dung trang/mẫu được xem là dữ liệu không đáng tin; prompt yêu cầu không thực hiện chỉ thị nhúng. Không có cơ chế nào loại bỏ tuyệt đối prompt injection/hallucination.
 - Hệ thống kiểm tra trích dẫn có xuất hiện nguyên văn trong nguồn (chuẩn hóa khoảng trắng). **Đây không phải xác minh rằng cách diễn giải của AI đúng về mặt ngữ nghĩa**. Cảnh báo mâu thuẫn/thời hạn vẫn do AI phân tích, có thể sai hoặc thiếu.
-- Hai lượt gọi OpenAI: (1) chọn dạng + trích dữ kiện, (2) viết theo cấu trúc, hướng dẫn, mẫu. `store=False` cho Responses API; điều này không thay thế chính sách lưu trữ/giám sát riêng của nhà cung cấp. Không cung cấp dữ liệu nhạy cảm khi chưa có quyền chia sẻ.
+- Hai lượt gọi AI đến cùng provider/model: (1) chọn dạng + trích dữ kiện, (2) viết theo cấu trúc, hướng dẫn, mẫu. `store=False` cho Responses API; Chat Completions không gửi trường này để tương thích các provider. Điều này không thay thế chính sách lưu trữ/giám sát riêng của nhà cung cấp. Không cung cấp dữ liệu nhạy cảm khi chưa có quyền chia sẻ.
 - Bài viết cuối cần kiểm duyệt; không tự động đăng Facebook.
 
 ## 6. Kiểm thử
@@ -171,14 +204,14 @@ AI không suy ra các dạng bài mới từ một thư viện mẫu chưa phân
 .\.venv\Scripts\python.exe -m ruff check backend tests
 ```
 
-Các test dùng database trong RAM và mock OpenAI, **không phát sinh phí**, kiểm tra CRUD, tách dự án, chọn dạng, lưu lịch sử/bản gốc, quyền truy cập, CSRF, giới hạn request, chặn URL nội bộ, xử lý DNS và trích dẫn. Cần kiểm tra thêm kết nối Supabase thực và đầu ra OpenAI với key của bạn sau khi cấu hình.
+Các test dùng database trong RAM và mock API AI, **không phát sinh phí**, kiểm tra CRUD, tách dự án, chọn dạng, lưu lịch sử/bản gốc, quyền truy cập, CSRF, giới hạn request, chặn URL nội bộ, xử lý DNS và trích dẫn. Các test provider kiểm tra base URL/prefix, Responses, Chat Completions, 3 định dạng JSON và xử lý lỗi. Cần kiểm tra thêm kết nối Supabase thực và đầu ra AI với key của bạn sau khi cấu hình.
 
 Kiểm thử migration PostgreSQL thật nằm trong `tests/test_postgresql_migrations.py` và mặc định được bỏ qua nếu chưa đặt `TEST_POSTGRES_ADMIN_DSN`. Biến này phải trỏ tới **PostgreSQL local chỉ dùng kiểm thử** (host `localhost`/`127.0.0.1`/`::1`), có quyền tạo database và hai role `anon`, `authenticated` (có thể tạo dạng `NOLOGIN` để mô phỏng Supabase). Mỗi test tự tạo rồi xóa đúng database tạm của nó; **không dùng database production**. Các test kiểm tra chạy SQL lặp lại, nâng cấp bản `JSON` cũ sang `JSONB` giữ dữ liệu, UUID mặc định, khóa ngoại và quyền RLS.
 
 ## Cấu trúc
 
 ```text
-backend/             API, xác thực, kết nối DB, đọc web, OpenAI
+backend/             API, xác thực, kết nối DB, đọc web, AI OpenAI-compatible
 static/              Giao diện tiếng Việt, không cần frontend build
 kb/                  Bộ dạng bài khởi đầu (chỉ thêm khi người dùng chọn)
 migrations/          SQL migration PostgreSQL và RLS

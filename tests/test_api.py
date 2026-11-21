@@ -34,6 +34,23 @@ def test_initial_status_and_static(client):
     assert client.get("/api/projects").headers["cache-control"] == "no-store"
 
 
+def test_status_shows_ai_protocol_without_exposing_provider_secrets():
+    with TestClient(memory_app(
+        openai_base_url="https://private-provider.example/tenant-private/v1",
+        openai_api_key="sk-private-provider-key", openai_response_format="json_object",
+        openai_model="provider-model",
+    ), headers=REQUEST_HEADERS) as client:
+        response = client.get("/api/status")
+        data = response.json()
+        assert data["ai_provider"] == "OpenAI-compatible"
+        assert data["ai_api_mode"] == "chat_completions"
+        assert data["ai_response_format"] == "json_object"
+        assert data["model"] == "provider-model"
+        assert data["openai_ready"] is True
+        assert "private-provider" not in response.text
+        assert "tenant-private" not in response.text
+
+
 def test_project_crud_and_isolation(client, project, article_format):
     second = client.post("/api/projects", json={"name": "Dự án khác"}).json()
     assert client.get(f"/api/projects/{second['id']}/formats").json() == []

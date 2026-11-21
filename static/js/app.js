@@ -600,7 +600,10 @@ async function updateStatus() {
   container.replaceChildren();
   const rows = [
     ["Database", state.status.database_ready ? state.status.database_type : "Chưa sẵn sàng"],
-    ["OpenAI", state.status.openai_ready ? "Đã cấu hình API key" : "Chưa có API key"],
+    ["Nhà cung cấp AI", state.status.ai_provider || "OpenAI"],
+    ["API key AI", state.status.openai_ready ? "Đã cấu hình API key" : "Chưa có API key"],
+    ["Giao thức", state.status.ai_api_mode === "chat_completions" ? "Chat Completions" : "Responses API"],
+    ["Định dạng AI", state.status.ai_response_format || "json_schema"],
     ["Mô hình", state.status.model],
     ["Môi trường", state.status.environment === "production" ? "Render / Production" : "Local / Development"],
     ["Bảo vệ truy cập", state.status.password_enabled ? "Mật khẩu không gian làm việc" : "Chưa bật (chỉ dùng local)"],

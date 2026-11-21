@@ -21,6 +21,8 @@ def memory_app(**overrides):
     values = {
         "app_env": "development", "app_password": "", "session_secret": "",
         "database_url": "", "openai_api_key": "sk-test-not-a-real-key",
+        "openai_base_url": "", "openai_api_mode": "auto",
+        "openai_response_format": "json_schema", "openai_chat_token_parameter": "max_tokens",
     }
     values.update(overrides)
     return create_app(Settings(_env_file=None, **values), engine=engine)

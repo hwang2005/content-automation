@@ -71,6 +71,16 @@ DATABASE_URL=postgresql+psycopg://postgres.PROJECT_REF:ENCODED_PASSWORD@POOLER_H
 
 Trên Render, start command tự chạy lệnh này trước khi khởi động web, nên bạn **không cần dán SQL thủ công**. Migration được đánh số trong `migrations/`, ghi lại ở `schema_migrations` và khóa để tránh hai tiến trình chạy đồng thời. Script cần quyền tạo bảng/đổi quyền; dùng role `postgres` của project cho lần thiết lập ban đầu.
 
+### Chạy SQL trực tiếp trong Supabase SQL Editor
+
+- **Database mới:** mở **SQL Editor → New query**, dán toàn bộ nội dung [`migrations/001_initial.sql`](migrations/001_initial.sql), chọn role `postgres` rồi **Run**.
+- **Đã tạo các bảng bằng bản SQL cũ:** chạy [`migrations/002_postgresql_defaults_jsonb.sql`](migrations/002_postgresql_defaults_jsonb.sql) để nâng cấp mà không xóa bảng/dòng hiện có. Bản nâng cấp cần khóa bảng trong lúc chuyển kiểu; nên chạy khi ít truy cập.
+- Các file dùng cú pháp PostgreSQL: `UUID DEFAULT gen_random_uuid()`, `JSONB` với default ép kiểu `::jsonb`, `BOOLEAN`, `TIMESTAMP WITH TIME ZONE`, khóa ngoại và RLS. Không cần cài extension để sinh UUID trên Supabase.
+- File `001` có `IF NOT EXISTS` cho bảng/index nên có thể chạy lại sau khi tạo thủ công. **Nó không tự sửa cấu trúc bảng đã tồn tại**; dùng file `002` cho bản schema cũ của ứng dụng.
+- Nếu sau đó chạy lệnh migration ở backend, các file sẽ được chạy/ghi nhận nếu chưa có trong `schema_migrations`, không bị lỗi trùng bảng. Các script có thể chạy lại trên schema tương ứng; không cần tự thêm bản ghi migration.
+
+Backend dùng `JSONB` khi kết nối PostgreSQL; SQLite vẫn dùng `JSON` chỉ cho phát triển local. Chuyển `JSON` sang `JSONB` giữ nội dung dữ liệu của ứng dụng nhưng không giữ thứ tự khóa/định dạng khoảng trắng của JSON.
+
 ### Quyền truy cập và RLS
 
 Migration bật **Row Level Security** trên các bảng, không tạo policy cho browser và thu hồi quyền của `anon`/`authenticated`. Mọi truy cập của ứng dụng đi qua backend đã đăng nhập. Role `postgres` dùng ở backend có quyền bypass RLS; bảo vệ connection string như mật khẩu quản trị. Khi mở rộng, nên tách migration role và application role có quyền tối thiểu.
@@ -162,6 +172,8 @@ AI không suy ra các dạng bài mới từ một thư viện mẫu chưa phân
 ```
 
 Các test dùng database trong RAM và mock OpenAI, **không phát sinh phí**, kiểm tra CRUD, tách dự án, chọn dạng, lưu lịch sử/bản gốc, quyền truy cập, CSRF, giới hạn request, chặn URL nội bộ, xử lý DNS và trích dẫn. Cần kiểm tra thêm kết nối Supabase thực và đầu ra OpenAI với key của bạn sau khi cấu hình.
+
+Kiểm thử migration PostgreSQL thật nằm trong `tests/test_postgresql_migrations.py` và mặc định được bỏ qua nếu chưa đặt `TEST_POSTGRES_ADMIN_DSN`. Biến này phải trỏ tới **PostgreSQL local chỉ dùng kiểm thử** (host `localhost`/`127.0.0.1`/`::1`), có quyền tạo database và hai role `anon`, `authenticated` (có thể tạo dạng `NOLOGIN` để mô phỏng Supabase). Mỗi test tự tạo rồi xóa đúng database tạm của nó; **không dùng database production**. Các test kiểm tra chạy SQL lặp lại, nâng cấp bản `JSON` cũ sang `JSONB` giữ dữ liệu, UUID mặc định, khóa ngoại và quyền RLS.
 
 ## Cấu trúc
 

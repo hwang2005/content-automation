@@ -19,7 +19,7 @@ class WritingError(Exception):
         super().__init__(message)
 
 
-def provider_error(error: APIStatusError) -> WritingError:
+def provider_error(error: APIStatusError, provider: str = "openai") -> WritingError:
     """Translate upstream failures without echoing bodies, keys or prompts."""
     body = error.body if isinstance(error.body, dict) else {}
     nested = body.get("error")
@@ -45,7 +45,8 @@ def provider_error(error: APIStatusError) -> WritingError:
     if status == 429:
         return WritingError("Nhà cung cấp AI giới hạn yêu cầu hoặc hết hạn mức. Kiểm tra quota/billing.", 429, code="AI_RATE_LIMITED", **options)
     if upstream_code in {"model_not_found", "MODEL_NOT_FOUND", "invalid_model", "unsupported_model"} or param == "model":
-        return WritingError("Nhà cung cấp không chấp nhận model đã cấu hình. Kiểm tra OPENAI_MODEL và quyền gọi model của key.", 503, code="AI_MODEL_UNAVAILABLE", **options)
+        model_name = "GROQ_MODEL" if provider == "groq" else "OPENAI_MODEL"
+        return WritingError(f"Nhà cung cấp không chấp nhận model đã cấu hình. Kiểm tra {model_name} và quyền gọi model của key.", 503, code="AI_MODEL_UNAVAILABLE", **options)
     if status in {404, 405, 501}:
         return WritingError(
             "Không dùng được endpoint AI (HTTP " + str(status) + "). Kiểm tra OPENAI_BASE_URL và OPENAI_API_MODE. "
@@ -125,6 +126,14 @@ def verified_facts(analysis: Analysis, sources: list[SourcePage]) -> tuple[list[
 class AIWriter:
     def __init__(self, settings: Settings):
         self.settings = settings
+        self.gemini_client = None
+        self.gemini_import_error = False
+        if settings.ai_provider == "gemini" and settings.ai_api_key.get_secret_value():
+            try:
+                from google import genai
+                self.gemini_client = genai.Client(api_key=settings.ai_api_key.get_secret_value()).aio
+            except ImportError:
+                self.gemini_import_error = True
         self.client = (
             AsyncOpenAI(
                 api_key=settings.ai_api_key.get_secret_value(),
@@ -132,12 +141,35 @@ class AIWriter:
                 timeout=settings.openai_timeout_seconds,
                 max_retries=1,
             )
-            if settings.ai_api_key.get_secret_value() else None
+            if settings.ai_api_key.get_secret_value() and settings.ai_provider != "gemini" else None
         )
 
     async def close(self):
         if self.client:
             await self.client.close()
+        if self.gemini_client:
+            await self.gemini_client.aclose()
+
+    async def parse_gemini(self, schema, system: str, payload: dict, max_tokens: int):
+        if self.gemini_import_error:
+            raise WritingError("Chưa cài thư viện google-genai trên máy chủ.", 503, code="AI_DEPENDENCY_MISSING")
+        prompt = json.dumps(payload, ensure_ascii=False)
+        response = await self.gemini_client.models.generate_content(
+            model=self.settings.ai_model,
+            contents=prompt,
+            config={
+                "system_instruction": system,
+                "response_mime_type": "application/json",
+                "response_schema": schema.model_json_schema(),
+                "max_output_tokens": max_tokens,
+            },
+        )
+        content = getattr(response, "text", None)
+        if not content:
+            raise WritingError("Gemini không trả về nội dung JSON hợp lệ.")
+        parsed = self.decode_result(schema, content)
+        usage = getattr(response, "usage_metadata", None)
+        return parsed, getattr(usage, "prompt_token_count", 0) or 0, getattr(usage, "candidates_token_count", 0) or 0
 
     @staticmethod
     def decode_result(schema, content: str):
@@ -214,7 +246,11 @@ class AIWriter:
         return parsed, (usage.prompt_tokens or 0) if usage else 0, (usage.completion_tokens or 0) if usage else 0
 
     async def parse(self, schema, system: str, payload: dict, max_tokens: int):
-        if not self.client:
+        if self.settings.ai_provider == "gemini" and not self.settings.ai_api_key.get_secret_value():
+            raise WritingError("Chưa cấu hình GEMINI_API_KEY trên máy chủ.", 503, code="AI_KEY_MISSING")
+        if self.settings.ai_provider == "gemini" and self.gemini_import_error:
+            raise WritingError("Chưa cài thư viện google-genai trên máy chủ.", 503, code="AI_DEPENDENCY_MISSING")
+        if not self.client and self.settings.ai_provider != "gemini":
             key_name = "GROQ_API_KEY" if self.settings.ai_provider == "groq" else "OPENAI_API_KEY"
             raise WritingError(f"Chưa cấu hình {key_name} trên máy chủ.", 503, code="AI_KEY_MISSING")
         key = self.settings.ai_api_key.get_secret_value()
@@ -233,17 +269,25 @@ class AIWriter:
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ]
         try:
+            if self.settings.ai_provider == "gemini":
+                return await self.parse_gemini(schema, system, payload, max_tokens)
             if self.settings.ai_api_mode == "chat_completions":
                 return await self.parse_chat_completions(schema, messages, max_tokens)
             return await self.parse_responses(schema, messages, max_tokens)
+        except WritingError:
+            raise
         except RateLimitError as error:
-            raise provider_error(error) from None
+            raise provider_error(error, self.settings.ai_provider) from None
         except APIConnectionError:
             raise WritingError("Không kết nối được máy chủ AI hoặc quá thời gian chờ. Kiểm tra OPENAI_BASE_URL và mạng, sau đó thử lại.", 504) from None
         except APIStatusError as error:
-            raise provider_error(error) from None
+            raise provider_error(error, self.settings.ai_provider) from None
         except (OpenAIError, ValidationError, ValueError, TypeError, AttributeError):
             raise WritingError("Không đọc được kết quả có cấu trúc từ AI. Vui lòng thử lại.") from None
+        except Exception:
+            if self.settings.ai_provider == "gemini":
+                raise WritingError("Gemini không thể xử lý yêu cầu. Kiểm tra API key, model và quota rồi thử lại.", 503, code="AI_UPSTREAM_ERROR") from None
+            raise
 
     async def write(self, project: dict, formats: list[dict], sources: list[SourcePage], additional: str) -> WritingResult:
         today = datetime.now(UTC).date().isoformat()

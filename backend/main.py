@@ -203,7 +203,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
             "database_ready": db_ready,
             "database_type": "Supabase / PostgreSQL" if engine.dialect.name == "postgresql" else "SQLite (local)",
             "openai_ready": bool(settings.ai_api_key.get_secret_value()),
-            "ai_provider": "Groq" if settings.ai_provider == "groq" else ("OpenAI" if settings.ai_base_url == "https://api.openai.com/v1" else "OpenAI-compatible"),
+            "ai_provider": {"groq": "Groq", "gemini": "Gemini (Google AI Studio)"}.get(settings.ai_provider, "OpenAI" if settings.ai_base_url == "https://api.openai.com/v1" else "OpenAI-compatible"),
             "ai_api_mode": settings.ai_api_mode,
             "ai_response_format": settings.ai_response_format,
             "model": settings.ai_model,
@@ -345,7 +345,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
     async def generate(payload: GenerateInput):
         if not settings.ai_api_key.get_secret_value():
             logger.warning("Generation failed code=AI_KEY_MISSING")
-            key_name = "GROQ_API_KEY" if settings.ai_provider == "groq" else "OPENAI_API_KEY"
+            key_name = {"groq": "GROQ_API_KEY", "gemini": "GEMINI_API_KEY"}.get(settings.ai_provider, "OPENAI_API_KEY")
             return JSONResponse({"detail": f"Chưa cấu hình {key_name} trên máy chủ.", "code": "AI_KEY_MISSING"}, status_code=503)
         project_data, formats = await run_in_threadpool(load_writing_context, payload.project_id)
         if app.state.generation_slots.locked():

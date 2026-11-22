@@ -50,14 +50,24 @@ Nếu `DATABASE_URL` để trống và `APP_ENV=development`, ứng dụng dùng
 
 Ứng dụng **không chấp nhận SQLite hoặc thiếu DATABASE_URL trong production**. Dữ liệu SQLite thử nghiệm không tự chuyển sang Supabase.
 
-### Cấu hình AI: OpenAI, Groq hoặc `base_url` bên thứ ba
+### Cấu hình AI: OpenAI, Groq, Gemini hoặc `base_url` bên thứ ba
+
+**Dùng Gemini qua Google AI Studio:** tạo API key tại Google AI Studio, sau đó đặt trong `.env` hoặc Render → Environment:
+
+```dotenv
+AI_PROVIDER=gemini
+GEMINI_API_KEY=YOUR_GEMINI_API_KEY
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+Gemini được gọi bằng SDK chính thức `google-genai` và trả về JSON theo schema Pydantic của ứng dụng. Khi dùng Gemini, các biến `OPENAI_*` và `GROQ_*` không được sử dụng.
 
 **Dùng Groq:** đặt `AI_PROVIDER=groq`, `GROQ_API_KEY` và model Groq muốn dùng. Ứng dụng gọi endpoint OpenAI-compatible của Groq bằng Chat Completions; nếu để `OPENAI_RESPONSE_FORMAT=json_schema`, ứng dụng tự dùng `json_object` để tương thích rộng với các model Groq.
 
 ```dotenv
 AI_PROVIDER=groq
 GROQ_API_KEY=YOUR_GROQ_API_KEY
-GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_MODEL=openai/gpt-oss-120b
 ```
 
 Khi dùng Groq, không cần đặt `OPENAI_API_KEY`. Có thể quay lại OpenAI bằng `AI_PROVIDER=openai`.
@@ -194,6 +204,8 @@ Session pooler giúp kết nối từ môi trường IPv4. Direct connection c�
 | `APP_ENV` | `production` |
 | `PYTHON_VERSION` | `3.12.12` (đồng bộ với `.python-version`) |
 | `OPENAI_API_KEY` | Key của OpenAI hoặc nhà cung cấp OpenAI-compatible đã chọn |
+| `GEMINI_API_KEY` | Key Google AI Studio khi `AI_PROVIDER=gemini` |
+| `GEMINI_MODEL` | ID model Gemini; mặc định `gemini-2.5-flash` |
 | `OPENAI_BASE_URL` | Tùy chọn; để trống dùng OpenAI. Dịch vụ khác: URL gốc API theo tài liệu nhà cung cấp |
 | `OPENAI_MODEL` | ID model chính xác của nhà cung cấp; mặc định `gpt-5-mini` cho OpenAI |
 | `OPENAI_API_MODE` | `auto` (mặc định), `responses` hoặc `chat_completions` |

@@ -18,8 +18,8 @@ async def check_ai(settings: Settings) -> tuple[dict, int]:
     writer = AIWriter(settings)
     context = {
         "api_mode": settings.ai_api_mode,
-        "response_format": settings.openai_response_format,
-        "model": settings.openai_model,
+        "response_format": settings.ai_response_format,
+        "model": settings.ai_model,
     }
     try:
         result, input_tokens, output_tokens = await writer.parse(

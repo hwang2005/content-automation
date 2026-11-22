@@ -202,11 +202,11 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
         return {
             "database_ready": db_ready,
             "database_type": "Supabase / PostgreSQL" if engine.dialect.name == "postgresql" else "SQLite (local)",
-            "openai_ready": bool(settings.openai_api_key.get_secret_value()),
-            "ai_provider": "OpenAI" if settings.ai_base_url == "https://api.openai.com/v1" else "OpenAI-compatible",
+            "openai_ready": bool(settings.ai_api_key.get_secret_value()),
+            "ai_provider": "Groq" if settings.ai_provider == "groq" else ("OpenAI" if settings.ai_base_url == "https://api.openai.com/v1" else "OpenAI-compatible"),
             "ai_api_mode": settings.ai_api_mode,
-            "ai_response_format": settings.openai_response_format,
-            "model": settings.openai_model,
+            "ai_response_format": settings.ai_response_format,
+            "model": settings.ai_model,
             "environment": settings.app_env,
             "password_enabled": bool(settings.app_password.get_secret_value()),
         }
@@ -334,7 +334,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
                 confidence=result.analysis.confidence, format_snapshot=result.format,
                 generated_content=result.content, original_content=result.content,
                 warnings=list(dict.fromkeys(extraction_warnings + result.warnings)),
-                additional_instructions=payload.additional_instructions, model=settings.openai_model,
+                additional_instructions=payload.additional_instructions, model=settings.ai_model,
                 input_tokens=result.input_tokens, output_tokens=result.output_tokens,
             )
             session.add(item)
@@ -343,9 +343,10 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
 
     @api.post("/generate", response_model=PostOut, status_code=201)
     async def generate(payload: GenerateInput):
-        if not settings.openai_api_key.get_secret_value():
+        if not settings.ai_api_key.get_secret_value():
             logger.warning("Generation failed code=AI_KEY_MISSING")
-            return JSONResponse({"detail": "Chưa cấu hình OPENAI_API_KEY trên máy chủ.", "code": "AI_KEY_MISSING"}, status_code=503)
+            key_name = "GROQ_API_KEY" if settings.ai_provider == "groq" else "OPENAI_API_KEY"
+            return JSONResponse({"detail": f"Chưa cấu hình {key_name} trên máy chủ.", "code": "AI_KEY_MISSING"}, status_code=503)
         project_data, formats = await run_in_threadpool(load_writing_context, payload.project_id)
         if app.state.generation_slots.locked():
             raise HTTPException(429, "Đang có nhiều bài được tạo. Hãy đợi một chút rồi thử lại.", headers={"Retry-After": "15"})
@@ -366,7 +367,7 @@ def create_app(settings: Settings | None = None, engine=None) -> FastAPI:
             # Do not log upstream bodies, headers, prompts, keys or base URL paths.
             logger.warning(
                 "Generation failed code=%s upstream_status=%s api_mode=%s response_format=%s",
-                error.code, error.upstream_status, settings.ai_api_mode, settings.openai_response_format,
+                error.code, error.upstream_status, settings.ai_api_mode, settings.ai_response_format,
             )
             return JSONResponse(
                 {"detail": str(error), "code": error.code, "upstream_status": error.upstream_status},

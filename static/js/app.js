@@ -121,7 +121,7 @@ async function navigate(view) {
 function renderNotice() {
   const messages = [];
   if (state.status && !state.status.database_ready) messages.push("Chưa kết nối được database hoặc chưa chạy migration.");
-  if (state.status && !state.status.openai_ready) messages.push("Chưa cấu hình OPENAI_API_KEY. Bạn vẫn có thể thiết lập dự án và dạng bài.");
+  if (state.status && !state.status.openai_ready) messages.push("Chưa cấu hình API key AI. Bạn vẫn có thể thiết lập dự án và dạng bài.");
   if (state.status?.environment === "development" && !state.status.password_enabled) messages.push("Chế độ local chưa bật mật khẩu. Hãy cấu hình APP_PASSWORD trước khi chia sẻ.");
   const notice = $("setup-notice");
   notice.replaceChildren();

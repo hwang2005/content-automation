@@ -50,7 +50,17 @@ Nếu `DATABASE_URL` để trống và `APP_ENV=development`, ứng dụng dùng
 
 Ứng dụng **không chấp nhận SQLite hoặc thiếu DATABASE_URL trong production**. Dữ liệu SQLite thử nghiệm không tự chuyển sang Supabase.
 
-### Cấu hình AI: OpenAI hoặc `base_url` bên thứ ba
+### Cấu hình AI: OpenAI, Groq hoặc `base_url` bên thứ ba
+
+**Dùng Groq:** đặt `AI_PROVIDER=groq`, `GROQ_API_KEY` và model Groq muốn dùng. Ứng dụng gọi endpoint OpenAI-compatible của Groq bằng Chat Completions; nếu để `OPENAI_RESPONSE_FORMAT=json_schema`, ứng dụng tự dùng `json_object` để tương thích rộng với các model Groq.
+
+```dotenv
+AI_PROVIDER=groq
+GROQ_API_KEY=YOUR_GROQ_API_KEY
+GROQ_MODEL=llama-3.3-70b-versatile
+```
+
+Khi dùng Groq, không cần đặt `OPENAI_API_KEY`. Có thể quay lại OpenAI bằng `AI_PROVIDER=openai`.
 
 **Dùng OpenAI như trước:** để `OPENAI_BASE_URL` trống, `OPENAI_API_MODE=auto`, `OPENAI_RESPONSE_FORMAT=json_schema`. Ứng dụng dùng `https://api.openai.com/v1/responses` và mô hình từ `OPENAI_MODEL` (mặc định `gpt-5-mini`).
 

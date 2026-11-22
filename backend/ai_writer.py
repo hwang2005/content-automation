@@ -127,12 +127,12 @@ class AIWriter:
         self.settings = settings
         self.client = (
             AsyncOpenAI(
-                api_key=settings.openai_api_key.get_secret_value(),
+                api_key=settings.ai_api_key.get_secret_value(),
                 base_url=settings.ai_base_url,
                 timeout=settings.openai_timeout_seconds,
                 max_retries=1,
             )
-            if settings.openai_api_key.get_secret_value() else None
+            if settings.ai_api_key.get_secret_value() else None
         )
 
     async def close(self):
@@ -152,18 +152,18 @@ class AIWriter:
         return schema.model_validate_json(content, strict=True)
 
     async def parse_responses(self, schema, messages: list[dict], max_tokens: int):
-        if self.settings.openai_response_format == "json_schema":
+        if self.settings.ai_response_format == "json_schema":
             response = await self.client.responses.parse(
-                model=self.settings.openai_model, input=messages, text_format=schema,
+                model=self.settings.ai_model, input=messages, text_format=schema,
                 max_output_tokens=max_tokens, store=False,
             )
             parsed = response.output_parsed
         else:
             options = {}
-            if self.settings.openai_response_format == "json_object":
+            if self.settings.ai_response_format == "json_object":
                 options["text"] = {"format": {"type": "json_object"}}
             response = await self.client.responses.create(
-                model=self.settings.openai_model, input=messages,
+                model=self.settings.ai_model, input=messages,
                 max_output_tokens=max_tokens, store=False, **options,
             )
             parsed = None
@@ -175,7 +175,7 @@ class AIWriter:
             for part in getattr(item, "content", []) or []
         ):
             raise WritingError("AI từ chối xử lý nội dung này. Hãy kiểm tra nội dung và thử lại.")
-        if self.settings.openai_response_format != "json_schema":
+        if self.settings.ai_response_format != "json_schema":
             parsed = self.decode_result(schema, response.output_text)
         if parsed is None:
             raise WritingError("AI không trả về kết quả có cấu trúc hợp lệ. Hãy kiểm tra mô hình và định dạng phản hồi.")
@@ -184,7 +184,7 @@ class AIWriter:
 
     async def parse_chat_completions(self, schema, messages: list[dict], max_tokens: int):
         options = {self.settings.openai_chat_token_parameter: max_tokens}
-        if self.settings.openai_response_format == "json_schema":
+        if self.settings.ai_response_format == "json_schema":
             options["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
@@ -192,12 +192,12 @@ class AIWriter:
                     "schema": schema.model_json_schema(),
                 },
             }
-        elif self.settings.openai_response_format == "json_object":
+        elif self.settings.ai_response_format == "json_object":
             options["response_format"] = {"type": "json_object"}
         # Text mode deliberately omits response_format for minimal compatible APIs.
         # Do not send Responses-only fields (input/text/store/max_output_tokens).
         response = await self.client.chat.completions.create(
-            model=self.settings.openai_model, messages=messages, **options,
+            model=self.settings.ai_model, messages=messages, **options,
         )
         if not response.choices:
             raise WritingError("Nhà cung cấp AI không trả về lựa chọn nội dung (choices).")
@@ -215,11 +215,13 @@ class AIWriter:
 
     async def parse(self, schema, system: str, payload: dict, max_tokens: int):
         if not self.client:
-            raise WritingError("Chưa cấu hình OPENAI_API_KEY trên máy chủ.", 503, code="AI_KEY_MISSING")
-        key = self.settings.openai_api_key.get_secret_value()
+            key_name = "GROQ_API_KEY" if self.settings.ai_provider == "groq" else "OPENAI_API_KEY"
+            raise WritingError(f"Chưa cấu hình {key_name} trên máy chủ.", 503, code="AI_KEY_MISSING")
+        key = self.settings.ai_api_key.get_secret_value()
         if key and (key.lower().startswith("bearer ") or key.startswith(('"', "'")) or any(char.isspace() for char in key)):
-            raise WritingError("OPENAI_API_KEY chứa prefix Bearer, dấu nháy hoặc khoảng trắng bên trong. Chỉ nhập chuỗi key gốc rồi restart/redeploy.", 503, code="AI_KEY_FORMAT_INVALID")
-        if self.settings.openai_response_format != "json_schema":
+            key_name = "GROQ_API_KEY" if self.settings.ai_provider == "groq" else "OPENAI_API_KEY"
+            raise WritingError(f"{key_name} chứa prefix Bearer, dấu nháy hoặc khoảng trắng bên trong. Chỉ nhập chuỗi key gốc rồi restart/redeploy.", 503, code="AI_KEY_FORMAT_INVALID")
+        if self.settings.ai_response_format != "json_schema":
             system += (
                 "\n\nChỉ trả về một JSON object hợp lệ theo JSON Schema sau. "
                 "Không thêm giải thích, Markdown hoặc code fence. "

@@ -89,6 +89,11 @@ def assert_postgresql_schema(connection):
                 assert connection.execute(text(
                     "SELECT has_table_privilege(:role, :table, :privilege)"
                 ), {"role": role, "table": f"public.{table}", "privilege": privilege}).scalar_one() is False
+    owner_default = connection.execute(text(
+        "SELECT column_default FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'projects' AND column_name = 'owner_id'"
+    )).scalar_one()
+    assert "'workspace'" in owner_default
 
 
 def run_migrations(monkeypatch, engine):
@@ -123,7 +128,7 @@ def test_sql_editor_bootstrap_replay_and_backend_runner(postgres_database, monke
         assert_postgresql_schema(connection)
         assert connection.execute(text(
             "SELECT version FROM public.schema_migrations ORDER BY version"
-        )).scalars().all() == ["001_initial.sql", "002_postgresql_defaults_jsonb.sql"]
+        )).scalars().all() == ["001_initial.sql", "002_postgresql_defaults_jsonb.sql", "003_project_owner.sql"]
 
     # Verify the actual PostgreSQL JSONB schema remains compatible with the ORM.
     with Session(engine) as session:
@@ -138,9 +143,10 @@ def test_sql_editor_bootstrap_replay_and_backend_runner(postgres_database, monke
 
 def test_existing_json_database_upgrade_preserves_rows(postgres_database, monkeypatch):
     engine = postgres_database
-    # Reproduce the original schema: JSON columns and application-generated UUIDs.
+    # Reproduce the original schema: JSON columns and application-generated UUIDs (before owner_id).
     legacy = BOOTSTRAP.replace("UUID PRIMARY KEY DEFAULT gen_random_uuid()", "UUID PRIMARY KEY")
     legacy = legacy.replace("JSONB", "JSON").replace("::jsonb", "::json")
+    project_id, format_id, post_id = uuid4(), uuid4(), uuid4()
     with engine.begin() as connection:
         connection.exec_driver_sql(legacy)
         connection.exec_driver_sql(
@@ -148,33 +154,30 @@ def test_existing_json_database_upgrade_preserves_rows(postgres_database, monkey
             "(version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now()); "
             "INSERT INTO public.schema_migrations(version) VALUES ('001_initial.sql');"
         )
-    with Session(engine) as session:
-        project = Project(name="Dự án đã có", writing_guide="Không đổi hướng dẫn.")
-        session.add(project)
-        session.flush()
-        article_format = ArticleFormat(
-            project_id=project.id, name="Hội thảo", structure="Tiêu đề → thông tin",
-            samples=["Bài mẫu cũ 🎯"], detection_keywords=["workshop"],
-        )
-        session.add(article_format)
-        session.flush()
-        post = GeneratedPost(
-            project_id=project.id, format_id=article_format.id, source_type="facebook_paste",
-            source_text="Thông tin nguồn.", source_title="Hội thảo AI",
-            sources=[{"title": "Nguồn gốc", "text": "Thông tin nguồn."}],
-            facts={"items": [{"label": "Phí", "value": "Miễn phí"}]},
-            selected_format_name=article_format.name, selection_reason="Đúng mục đích.",
-            confidence=0.9, format_snapshot={"name": article_format.name},
-            generated_content="Nội dung đã sửa ✨", original_content="Nội dung ban đầu 🎯",
-            warnings=["Cần kiểm tra hạn chót."], model="test-model",
-        )
-        session.add(post)
-        session.commit()
-        project_id, format_id, post_id = project.id, article_format.id, post.id
+        connection.execute(text(
+            "INSERT INTO public.projects(id, name, writing_guide) VALUES (:id, 'Dự án đã có', 'Không đổi hướng dẫn.')"
+        ), {"id": project_id})
+        connection.execute(text(
+            "INSERT INTO public.article_formats(id, project_id, name, structure, samples, detection_keywords) "
+            "VALUES (:id, :project_id, 'Hội thảo', 'Tiêu đề → thông tin', '[\"Bài mẫu cũ 🎯\"]'::json, '[\"workshop\"]'::json)"
+        ), {"id": format_id, "project_id": project_id})
+        connection.execute(text(
+            "INSERT INTO public.generated_posts("
+            "id, project_id, format_id, source_type, source_text, source_title, sources, facts, "
+            "selected_format_name, selection_reason, confidence, format_snapshot, generated_content, "
+            "original_content, warnings, model"
+            ") VALUES ("
+            ":id, :project_id, :format_id, 'facebook_paste', 'Thông tin nguồn.', 'Hội thảo AI', "
+            "'[{\"title\": \"Nguồn gốc\", \"text\": \"Thông tin nguồn.\"}]'::json, "
+            "'{\"items\": [{\"label\": \"Phí\", \"value\": \"Miễn phí\"}]}'::json, "
+            "'Hội thảo', 'Đúng mục đích.', 0.9, '{\"name\": \"Hội thảo\"}'::json, "
+            "'Nội dung đã sửa ✨', 'Nội dung ban đầu 🎯', '[\"Cần kiểm tra hạn chót.\"]'::json, 'test-model'"
+            ")"
+        ), {"id": post_id, "project_id": project_id, "format_id": format_id})
     with engine.connect() as connection:
         before = connection.execute(select(GeneratedPost.__table__)).mappings().one()
 
-    # 001 is already applied, so the new 002 must upgrade without rerunning 001.
+    # 001 is already applied, so 002 and 003 must upgrade without rerunning 001.
     run_migrations(monkeypatch, engine)
     with engine.begin() as connection:
         connection.exec_driver_sql(UPGRADE)  # A repeated manual upgrade also succeeds.
@@ -182,6 +185,7 @@ def test_existing_json_database_upgrade_preserves_rows(postgres_database, monkey
         after = connection.execute(select(GeneratedPost.__table__)).mappings().one()
         assert dict(after) == dict(before)
         assert after["id"] == post_id and after["project_id"] == project_id
+        assert connection.execute(text("SELECT owner_id FROM public.projects WHERE id = :id"), {"id": project_id}).scalar_one() == "workspace"
     with Session(engine) as session:
         assert session.get(ArticleFormat, format_id).samples == ["Bài mẫu cũ 🎯"]
         session.delete(session.get(ArticleFormat, format_id))

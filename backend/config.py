@@ -6,6 +6,32 @@ from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _validate_http_url(value: str, field_name: str) -> str:
+    value = value.strip().rstrip("/")
+    if not value:
+        return ""
+    try:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or any(character.isspace() or ord(character) < 32 for character in value)
+            or "\\" in value
+        ):
+            raise ValueError
+        # Accessing port also validates malformed/out-of-range port numbers.
+        _ = parsed.port
+    except ValueError:
+        raise ValueError(
+            f"{field_name} phải là URL HTTP/HTTPS, không chứa thông tin đăng nhập, query hoặc fragment."
+        ) from None
+    return value
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -13,6 +39,9 @@ class Settings(BaseSettings):
     app_name: str = "Content Studio"
     app_password: SecretStr = SecretStr("")
     session_secret: SecretStr = SecretStr("")
+    supabase_url: str = ""
+    supabase_anon_key: SecretStr = SecretStr("")
+    allowed_emails: str = ""
     database_url: SecretStr = SecretStr("")
     ai_provider: Literal["openai", "groq", "gemini"] = "openai"
     openai_api_key: SecretStr = SecretStr("")
@@ -31,53 +60,25 @@ class Settings(BaseSettings):
     generate_requests_per_hour: int = Field(default=30, ge=1, le=1000)
     max_concurrent_generations: int = Field(default=2, ge=1, le=10)
 
-    @field_validator("openai_api_key", mode="before")
+    @field_validator("openai_api_key", "groq_api_key", "gemini_api_key", "supabase_anon_key", mode="before")
     @classmethod
-    def normalize_api_key(cls, value):
+    def normalize_secret_key(cls, value):
         # Render values and pasted credentials can include trailing spaces/newlines.
-        key = value.get_secret_value() if isinstance(value, SecretStr) else value
-        return key.strip() if isinstance(key, str) else key
-
-    @field_validator("groq_api_key", mode="before")
-    @classmethod
-    def normalize_groq_api_key(cls, value):
-        key = value.get_secret_value() if isinstance(value, SecretStr) else value
-        return key.strip() if isinstance(key, str) else key
-
-    @field_validator("gemini_api_key", mode="before")
-    @classmethod
-    def normalize_gemini_api_key(cls, value):
         key = value.get_secret_value() if isinstance(value, SecretStr) else value
         return key.strip() if isinstance(key, str) else key
 
     @field_validator("openai_base_url")
     @classmethod
     def validate_base_url(cls, value: str) -> str:
-        value = value.strip().rstrip("/")
-        if not value:
-            return ""
-        try:
-            parsed = urlsplit(value)
-            if (
-                parsed.scheme not in {"http", "https"}
-                or not parsed.hostname
-                or parsed.username is not None
-                or parsed.password is not None
-                or parsed.query
-                or parsed.fragment
-                or any(character.isspace() or ord(character) < 32 for character in value)
-                or "\\" in value
-            ):
-                raise ValueError
-            # Accessing port also validates malformed/out-of-range port numbers.
-            _ = parsed.port
-        except ValueError:
-            raise ValueError(
-                "OPENAI_BASE_URL phải là URL HTTP/HTTPS, không chứa thông tin đăng nhập, query hoặc fragment."
-            ) from None
-        if parsed.path.endswith(("/chat/completions", "/responses")):
+        value = _validate_http_url(value, "OPENAI_BASE_URL")
+        if value and urlsplit(value).path.endswith(("/chat/completions", "/responses")):
             raise ValueError("OPENAI_BASE_URL phải là URL gốc API (ví dụ https://provider.example/v1), không phải URL endpoint.")
         return value
+
+    @field_validator("supabase_url")
+    @classmethod
+    def validate_supabase_url(cls, value: str) -> str:
+        return _validate_http_url(value, "SUPABASE_URL")
 
     @property
     def ai_base_url(self) -> str:
@@ -117,6 +118,23 @@ class Settings(BaseSettings):
         return "json_object" if self.ai_provider == "groq" and self.openai_response_format == "json_schema" else self.openai_response_format
 
     @property
+    def allowed_email_set(self) -> set[str]:
+        return {item.strip().lower() for item in self.allowed_emails.split(",") if item.strip()}
+
+    @property
+    def password_auth_enabled(self) -> bool:
+        password = self.app_password.get_secret_value()
+        return len(password) >= 12 if self.production else bool(password)
+
+    @property
+    def google_oauth_enabled(self) -> bool:
+        return bool(self.supabase_url and self.supabase_anon_key.get_secret_value())
+
+    @property
+    def login_required(self) -> bool:
+        return self.production or self.password_auth_enabled or self.google_oauth_enabled
+
+    @property
     def production(self) -> bool:
         return self.app_env == "production"
 
@@ -124,9 +142,8 @@ class Settings(BaseSettings):
     def auth_ready(self) -> bool:
         if not self.production:
             return True
-        return (
-            len(self.app_password.get_secret_value()) >= 12
-            and len(self.session_secret.get_secret_value()) >= 32
+        return len(self.session_secret.get_secret_value()) >= 32 and (
+            self.password_auth_enabled or self.google_oauth_enabled
         )
 
 

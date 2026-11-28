@@ -5,7 +5,7 @@ from pathlib import Path
 from sqlalchemy import text
 
 from backend.config import get_settings
-from backend.database import make_engine
+from backend.database import ensure_sqlite_schema, make_engine
 from backend.models import Base
 
 
@@ -14,6 +14,7 @@ def migrate():
     try:
         if engine.dialect.name == "sqlite":
             Base.metadata.create_all(engine)
+            ensure_sqlite_schema(engine)
             print("Local SQLite tables ready. Production uses Supabase PostgreSQL.")
             return
         with engine.begin() as connection:

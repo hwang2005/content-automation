@@ -210,8 +210,9 @@ svg  { pointer-events: none; }
   border: 1px solid #4A4540;
   flex: none;
 }
-.sidebar-bottom strong { display: block; font-size: 11px; font-weight: 550; color: #C4BDB5; }
-.sidebar-bottom div > span { display: block; font-size: 10px; color: #5A5248; margin-top: 3px; }
+.sidebar-bottom > div { min-width: 0; overflow: hidden; }
+.sidebar-bottom strong { display: block; font-size: 11px; font-weight: 550; color: #C4BDB5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-bottom div > span { display: block; font-size: 10px; color: #5A5248; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-bottom .icon-button { margin-left: auto; width: 28px; height: 28px; }
 
 
@@ -324,6 +325,15 @@ svg  { pointer-events: none; }
   color: #4A4540;
 }
 .button.secondary:hover:not(:disabled) { background: #F4F0EA; border-color: #D5CFC7; }
+
+.button.google {
+  border-color: #D8D1C7;
+  background: white;
+  color: #26221E;
+  box-shadow: 0 1px 2px rgba(26,23,20,.05);
+}
+.button.google:hover:not(:disabled) { background: #FAF8F5; border-color: #C7BEB2; }
+.button.google .icon { width: 17px; height: 17px; }
 
 .button.danger      { color: white; background: var(--danger); }
 .button.danger-text { color: var(--danger); background: transparent; }
@@ -1138,7 +1148,26 @@ code {
 }
 .login-card h1 { font-size: 28px; margin: 10px 0 13px; }
 .login-card > p { font-size: 12px; }
-.login-card label { margin-top: 26px; }
+.login-card .form-error { margin-top: 18px; }
+.login-card #google-login-section { margin-top: 22px; }
+.login-card #google-login-section .button { margin-top: 0; }
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.login-card label { margin-top: 22px; }
+.login-divider + #login-form label { margin-top: 14px; }
 .login-card .button { margin-top: 20px; }
 .login-card > .small { font-size: 10px; margin-top: 16px; text-align: center; }
 

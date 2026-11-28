@@ -55,5 +55,21 @@ def make_engine(settings: Settings):
     return engine
 
 
+def ensure_sqlite_schema(engine):
+    """Ensure local SQLite databases receive additive columns without losing data."""
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as connection:
+        columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(projects)")}
+        if columns and "owner_id" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE projects ADD COLUMN owner_id VARCHAR(128) NOT NULL DEFAULT 'workspace'"
+            )
+        if columns:
+            connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_projects_owner_id ON projects (owner_id)"
+            )
+
+
 def session_factory(engine):
     return sessionmaker(bind=engine, class_=Session, expire_on_commit=False)

@@ -3,8 +3,17 @@ import { api } from "./api-client.js";
 const $ = (id) => document.getElementById(id);
 const state = {
   projects: [], formats: [], projectId: null, view: "writer", sourceType: "url",
-  status: null, result: null, generating: false, historyPage: 1,
+  status: null, session: null, result: null, generating: false, historyPage: 1,
   editingProject: null, editingFormat: null,
+};
+const AUTH_ERROR_MESSAGES = {
+  oauth_not_configured: "Đăng nhập Google chưa được cấu hình đầy đủ trên máy chủ.",
+  oauth_cancelled: "Bạn đã hủy đăng nhập Google.",
+  oauth_invalid_callback: "Phản hồi đăng nhập Google không hợp lệ. Vui lòng thử lại.",
+  oauth_state_expired: "Phiên xác thực Google đã hết hạn. Vui lòng thử lại.",
+  oauth_exchange_failed: "Không thể xác thực tài khoản Google qua Supabase. Vui lòng thử lại.",
+  email_unverified: "Tài khoản Google chưa xác minh email nên chưa thể đăng nhập.",
+  email_not_allowed: "Email Google này chưa được cấp quyền truy cập Studio.",
 };
 let toastTimer;
 let confirmResolve;
@@ -122,7 +131,7 @@ function renderNotice() {
   const messages = [];
   if (state.status && !state.status.database_ready) messages.push("Chưa kết nối được database hoặc chưa chạy migration.");
   if (state.status && !state.status.openai_ready) messages.push("Chưa cấu hình API key AI. Bạn vẫn có thể thiết lập dự án và dạng bài.");
-  if (state.status?.environment === "development" && !state.status.password_enabled) messages.push("Chế độ local chưa bật mật khẩu. Hãy cấu hình APP_PASSWORD trước khi chia sẻ.");
+  if (state.status?.environment === "development" && !state.session?.login_required) messages.push("Chế độ local chưa bật đăng nhập. Hãy cấu hình APP_PASSWORD hoặc Supabase Google OAuth trước khi chia sẻ.");
   const notice = $("setup-notice");
   notice.replaceChildren();
   notice.hidden = !messages.length;
@@ -598,6 +607,14 @@ async function updateStatus() {
   renderNotice();
   const container = $("settings-status");
   container.replaceChildren();
+  const authLabel = state.status.auth_method === "google"
+    ? `Google (${state.status.user_email || "đã đăng nhập"})`
+    : state.status.auth_method === "password"
+      ? "Mật khẩu không gian làm việc"
+      : "Chưa bật (chỉ dùng local)";
+  const methods = [];
+  if (state.status.google_oauth_enabled) methods.push("Google OAuth");
+  if (state.status.password_enabled) methods.push("Mật khẩu");
   const rows = [
     ["Database", state.status.database_ready ? state.status.database_type : "Chưa sẵn sàng"],
     ["Nhà cung cấp AI", state.status.ai_provider || "OpenAI"],
@@ -606,15 +623,16 @@ async function updateStatus() {
     ["Định dạng AI", state.status.ai_response_format || "json_schema"],
     ["Mô hình", state.status.model],
     ["Môi trường", state.status.environment === "production" ? "Render / Production" : "Local / Development"],
-    ["Bảo vệ truy cập", state.status.password_enabled ? "Mật khẩu không gian làm việc" : "Chưa bật (chỉ dùng local)"],
+    ["Tài khoản hiện tại", authLabel],
+    ["Phương thức bật", methods.length ? methods.join(" + ") : "Mở tự do (chỉ dùng local)"],
   ];
   for (const [label, value] of rows) {
     const row = node("div", "", "status-row");
     row.append(node("span", label), node("strong", value));
     container.append(row);
   }
-  if (state.status.password_enabled) {
-    container.append(actionButton("Đăng xuất khỏi không gian làm việc", logout, "button secondary"));
+  if (state.session?.login_required) {
+    container.append(actionButton("Đăng xuất", logout, "button secondary"));
   }
 }
 
@@ -623,24 +641,69 @@ async function showSettings() {
   try { await updateStatus(); } catch (error) { toast(error.message, true); }
 }
 
-function showLogin(message = "") {
+function consumeAuthError() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("auth_error");
+  if (!code) return "";
+  window.history.replaceState({}, "", "/");
+  return AUTH_ERROR_MESSAGES[code] || "Đăng nhập Google thất bại. Vui lòng thử lại.";
+}
+
+function userInitials(text) {
+  const parts = (text || "").trim().split(/[\s@._-]+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return (text || "CS").slice(0, 2).toUpperCase();
+}
+
+function renderUserProfile(session) {
+  const user = session?.user;
+  if (user?.auth_method === "google") {
+    $("user-avatar").textContent = userInitials(user.name || user.email);
+    $("user-name").textContent = user.name || user.email;
+    $("user-sub").textContent = user.email || "Google OAuth";
+  } else {
+    $("user-avatar").textContent = "CS";
+    $("user-name").textContent = "Content workspace";
+    $("user-sub").textContent = user?.auth_method === "password" ? "Không gian dùng chung" : "Local workspace";
+  }
+  $("logout-button").hidden = !session?.login_required;
+}
+
+function showLogin(message = "", session = state.session) {
   $("app-shell").hidden = true;
   $("login-screen").hidden = false;
+  const showGoogle = Boolean(session?.google_oauth_enabled);
+  const showPassword = Boolean(session?.password_required);
+  $("google-login-section").hidden = !showGoogle;
+  $("login-form").hidden = !showPassword;
+  $("login-divider").hidden = !(showGoogle && showPassword);
+  if (showGoogle && showPassword) {
+    $("login-help").textContent = "Tài khoản Google có dự án riêng; mật khẩu dùng chung không gian làm việc.";
+  } else if (showGoogle) {
+    $("login-help").textContent = "Mỗi tài khoản Google quản lý danh sách dự án riêng qua Supabase Auth.";
+  } else {
+    $("login-help").textContent = "Mật khẩu được quản trị viên cấu hình trên Render.";
+  }
   errorAt("login-error", message);
 }
 
 async function bootstrap() {
   $("boot-error").hidden = true;
+  const authError = consumeAuthError();
   try {
     const session = await api("/session");
+    state.session = session;
     if (!session.auth_configured) {
-      showLogin("Máy chủ chưa cấu hình APP_PASSWORD (ít nhất 12 ký tự) và SESSION_SECRET (ít nhất 32 ký tự). Cập nhật trên Render trước khi đăng nhập.");
+      showLogin(
+        authError || "Máy chủ chưa cấu hình SESSION_SECRET (32+ ký tự) cùng APP_PASSWORD (12+ ký tự) hoặc Supabase Google OAuth. Cập nhật trên Render trước khi đăng nhập.",
+        session,
+      );
       return;
     }
-    if (!session.authenticated) { showLogin(); return; }
+    if (!session.authenticated) { showLogin(authError, session); return; }
     $("login-screen").hidden = true;
     $("app-shell").hidden = false;
-    $("logout-button").hidden = !session.password_required;
+    renderUserProfile(session);
     await updateStatus();
     if (state.status.database_ready) {
       await loadProjects(state.projectId || rememberedProject());

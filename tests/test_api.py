@@ -1,9 +1,14 @@
 from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.pool import StaticPool
 
 from backend.ai_writer import Analysis, Fact, WritingError, WritingResult
+from backend.auth import OAuthExchangeError
+from backend.database import ensure_sqlite_schema
 from tests.conftest import REQUEST_HEADERS, memory_app
 
 PASTED_TEXT = "Workshop AI dành cho sinh viên. Thời gian: 09:00 ngày 30/12/2026. Tham dự miễn phí."
@@ -190,7 +195,7 @@ def test_authentication_cookie_csrf_and_logout():
         response = client.post("/api/login", json={"password": "correct-password"})
         assert response.status_code == 200
         cookie = response.headers["set-cookie"].lower()
-        assert "httponly" in cookie and "samesite=strict" in cookie
+        assert "httponly" in cookie and "samesite=lax" in cookie
         assert client.get("/api/projects").status_code == 200
         assert client.post("/api/projects", json={"name": "X"}, headers={"Origin": "https://evil.example"}).status_code == 403
         assert client.post("/api/projects", json={"name": "X"}, headers={"X-Workspace-Request": ""}).status_code == 403
@@ -221,3 +226,168 @@ def test_generation_rate_limit(client, project, article_format):
     payload = {"project_id": project["id"], "source_type": "facebook_paste", "source_text": PASTED_TEXT}
     assert client.post("/api/generate", json=payload).status_code == 201
     assert client.post("/api/generate", json=payload).status_code == 429
+
+
+def _login_google(client: TestClient, user_id: str, email: str, name: str = "Google User"):
+    client.app.state.exchange_supabase_pkce = AsyncMock(
+        return_value={"id": user_id, "email": email, "name": name, "email_verified": True}
+    )
+    start = client.get("/auth/google", follow_redirects=False)
+    assert start.status_code == 302
+    callback = client.get("/auth/callback?code=valid-auth-code", follow_redirects=False)
+    assert callback.status_code == 302
+    assert callback.headers["location"] == "/"
+    return start, callback
+
+
+def test_google_oauth_login_flow_and_session_status():
+    app = memory_app(
+        app_env="production",
+        session_secret="s" * 48,
+        supabase_url="https://demo.supabase.co",
+        supabase_anon_key="anon-test-key",
+        app_origin="https://studio.example.com",
+    )
+    with TestClient(app, base_url="https://testserver", headers=REQUEST_HEADERS) as client:
+        session = client.get("/api/session").json()
+        assert session["authenticated"] is False
+        assert session["auth_configured"] is True
+        assert session["google_oauth_enabled"] is True
+        assert session["password_enabled"] is False
+        assert client.post("/api/login", json={"password": "anything"}).status_code == 400
+
+        start, callback = _login_google(client, "user-123", "alice@example.com", "Alice")
+        location = urlsplit(start.headers["location"])
+        assert f"{location.scheme}://{location.netloc}{location.path}" == "https://demo.supabase.co/auth/v1/authorize"
+        params = parse_qs(location.query)
+        assert params["provider"] == ["google"]
+        assert params["redirect_to"] == ["https://studio.example.com/auth/callback"]
+        assert params["code_challenge_method"] == ["s256"]
+        assert "httponly" in start.headers["set-cookie"].lower()
+        assert "secure" in start.headers["set-cookie"].lower()
+        assert "samesite=lax" in callback.headers["set-cookie"].lower()
+
+        session_after = client.get("/api/session").json()
+        assert session_after["authenticated"] is True
+        assert session_after["user"] == {"auth_method": "google", "email": "alice@example.com", "name": "Alice"}
+        status = client.get("/api/status").json()
+        assert status["auth_method"] == "google"
+        assert status["user_email"] == "alice@example.com"
+        assert status["google_oauth_enabled"] is True
+
+
+def test_per_account_project_isolation_between_google_and_password_users():
+    app = memory_app(
+        app_env="production",
+        app_password="workspace-password-123",
+        session_secret="s" * 48,
+        supabase_url="https://demo.supabase.co",
+        supabase_anon_key="anon-test-key",
+        app_origin="https://studio.example.com",
+    )
+    with (
+        TestClient(app, base_url="https://testserver", headers=REQUEST_HEADERS) as user_a,
+        TestClient(app, base_url="https://testserver", headers=REQUEST_HEADERS) as user_b,
+        TestClient(app, base_url="https://testserver", headers=REQUEST_HEADERS) as pw_user,
+    ):
+        assert user_a.get("/api/session").json()["password_enabled"] is True
+        assert user_a.get("/api/session").json()["google_oauth_enabled"] is True
+
+        _login_google(user_a, "uid-a", "a@example.com", "Alice")
+        _login_google(user_b, "uid-b", "b@example.com", "Bob")
+        assert pw_user.post("/api/login", json={"password": "workspace-password-123"}).status_code == 200
+
+        project_a = user_a.post("/api/projects", json={"name": "Dự án của Alice"}).json()
+        format_a = user_a.post(
+            f"/api/projects/{project_a['id']}/formats",
+            json={"name": "Tin tức", "structure": "Tiêu đề → nội dung"},
+        ).json()
+        app.state.writer.write = AsyncMock(return_value=fake_write_result(format_a))
+        post_a = user_a.post(
+            "/api/generate",
+            json={"project_id": project_a["id"], "source_type": "facebook_paste", "source_text": PASTED_TEXT},
+        ).json()
+
+        project_pw = pw_user.post("/api/projects", json={"name": "Dự án chung"}).json()
+
+        assert [p["id"] for p in user_a.get("/api/projects").json()] == [project_a["id"]]
+        assert user_b.get("/api/projects").json() == []
+        assert [p["id"] for p in pw_user.get("/api/projects").json()] == [project_pw["id"]]
+
+        for other in (user_b, pw_user):
+            assert other.put(f"/api/projects/{project_a['id']}", json={"name": "Hack"}).status_code == 404
+            assert other.delete(f"/api/projects/{project_a['id']}").status_code == 404
+            assert other.get(f"/api/projects/{project_a['id']}/formats").status_code == 404
+            assert other.put(
+                f"/api/projects/{project_a['id']}/formats/{format_a['id']}",
+                json={"name": "Hack", "structure": "X"},
+            ).status_code == 404
+            assert other.delete(f"/api/projects/{project_a['id']}/formats/{format_a['id']}").status_code == 404
+            assert other.get(f"/api/projects/{project_a['id']}/posts").status_code == 404
+            assert other.get(f"/api/projects/{project_a['id']}/posts/{post_a['id']}").status_code == 404
+            assert other.patch(
+                f"/api/projects/{project_a['id']}/posts/{post_a['id']}",
+                json={"generated_content": "Hack"},
+            ).status_code == 404
+            assert other.post(
+                "/api/generate",
+                json={"project_id": project_a["id"], "source_type": "facebook_paste", "source_text": PASTED_TEXT},
+            ).status_code == 404
+
+        assert user_a.get(f"/api/projects/{project_pw['id']}/formats").status_code == 404
+
+
+def test_google_oauth_callback_errors_and_allowlist():
+    app = memory_app(
+        app_env="production",
+        session_secret="s" * 48,
+        supabase_url="https://demo.supabase.co",
+        supabase_anon_key="anon-test-key",
+        allowed_emails="allowed@example.com",
+    )
+    with TestClient(app, base_url="https://testserver", headers=REQUEST_HEADERS) as client:
+        assert client.get("/auth/callback?code=abc", follow_redirects=False).headers["location"] == "/?auth_error=oauth_state_expired"
+
+        client.get("/auth/google", follow_redirects=False)
+        assert client.get("/auth/callback?error=access_denied", follow_redirects=False).headers["location"] == "/?auth_error=oauth_cancelled"
+
+        client.get("/auth/google", follow_redirects=False)
+        assert client.get("/auth/callback", follow_redirects=False).headers["location"] == "/?auth_error=oauth_invalid_callback"
+
+        client.get("/auth/google", follow_redirects=False)
+        app.state.exchange_supabase_pkce = AsyncMock(side_effect=OAuthExchangeError("oauth_exchange_failed"))
+        assert client.get("/auth/callback?code=bad", follow_redirects=False).headers["location"] == "/?auth_error=oauth_exchange_failed"
+
+        client.get("/auth/google", follow_redirects=False)
+        app.state.exchange_supabase_pkce = AsyncMock(
+            return_value={"id": "u1", "email": "allowed@example.com", "name": "Allowed", "email_verified": False}
+        )
+        assert client.get("/auth/callback?code=unverified", follow_redirects=False).headers["location"] == "/?auth_error=email_unverified"
+
+        client.get("/auth/google", follow_redirects=False)
+        app.state.exchange_supabase_pkce = AsyncMock(
+            return_value={"id": "u2", "email": "stranger@example.com", "name": "Stranger", "email_verified": True}
+        )
+        assert client.get("/auth/callback?code=blocked", follow_redirects=False).headers["location"] == "/?auth_error=email_not_allowed"
+        assert client.get("/api/session").json()["authenticated"] is False
+
+        client.get("/auth/google", follow_redirects=False)
+        app.state.exchange_supabase_pkce = AsyncMock(
+            return_value={"id": "u1", "email": "Allowed@Example.com", "name": "Allowed", "email_verified": True}
+        )
+        assert client.get("/auth/callback?code=ok", follow_redirects=False).headers["location"] == "/"
+        assert client.get("/api/session").json()["authenticated"] is True
+
+
+def test_sqlite_schema_upgrade_adds_owner_id_with_workspace_default():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE projects (id CHAR(32) PRIMARY KEY, name VARCHAR(120) NOT NULL, "
+            "description TEXT NOT NULL DEFAULT '', writing_guide TEXT NOT NULL DEFAULT '')"
+        )
+        connection.exec_driver_sql("INSERT INTO projects (id, name) VALUES ('11111111111111111111111111111111', 'Old')")
+    ensure_sqlite_schema(engine)
+    with engine.connect() as connection:
+        owner = connection.execute(text("SELECT owner_id FROM projects WHERE name = 'Old'")).scalar_one()
+        assert owner == "workspace"

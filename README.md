@@ -170,6 +170,22 @@ Backend dùng `JSONB` khi kết nối PostgreSQL; SQLite vẫn dùng `JSON` ch�
 
 Migration bật **Row Level Security** trên các bảng, không tạo policy cho browser và thu hồi quyền của `anon`/`authenticated`. Mọi truy cập của ứng dụng đi qua backend đã đăng nhập. Role `postgres` dùng ở backend có quyền bypass RLS; bảo vệ connection string như mật khẩu quản trị. Khi mở rộng, nên tách migration role và application role có quyền tối thiểu.
 
+### Đăng nhập Google OAuth qua Supabase (song song với mật khẩu)
+
+Ứng dụng hỗ trợ dùng song song **mật khẩu không gian làm việc (`APP_PASSWORD`)** và **đăng nhập Google qua Supabase Auth (`SUPABASE_URL` + `SUPABASE_ANON_KEY`)**:
+- Các dự án tạo khi đăng nhập bằng **tài khoản Google** được tách riêng theo từng tài khoản (`owner_id = supabase:<user_id>`).
+- Các dự án tạo khi đăng nhập bằng **mật khẩu chung** nằm trong không gian `workspace` dùng chung.
+
+Các bước cấu hình:
+1. Trong **Google Cloud Console → APIs & Services → Credentials → OAuth client ID (Web application)**:
+   - Thêm Authorized redirect URI trỏ về Supabase: `https://<PROJECT_REF>.supabase.co/auth/v1/callback`.
+2. Trong **Supabase Dashboard → Authentication → Sign In / Providers → Google**:
+   - Bật **Google**, dán **Client ID** và **Client Secret** từ Google Cloud rồi lưu.
+3. Trong **Supabase Dashboard → Authentication → URL Configuration**:
+   - Đặt **Site URL** là origin ứng dụng của bạn (`http://127.0.0.1:8000` khi chạy local, hoặc `https://content-studio-xxxx.onrender.com` trên Render).
+   - Thêm vào **Redirect URLs**: `http://127.0.0.1:8000/auth/callback` và `https://content-studio-xxxx.onrender.com/auth/callback`.
+4. Trong `.env` hoặc **Render → Environment**, đặt `SUPABASE_URL` (Project URL), `SUPABASE_ANON_KEY` (Publishable/anon key), `SESSION_SECRET` và `APP_ORIGIN` (bắt buộc khớp HTTPS origin khi deploy). Nếu muốn giới hạn ai được phép đăng nhập Google, đặt thêm `ALLOWED_EMAILS=a@gmail.com,b@gmail.com`.
+
 Session pooler giúp kết nối từ môi trường IPv4. Direct connection của nhiều project Supabase mặc định dùng IPv6. Chọn region Supabase gần Render để giảm độ trễ.
 
 `sslmode=require` bắt buộc mã hóa kết nối nhưng không xác thực đầy đủ chứng chỉ máy chủ. Nếu cần xác thực máy chủ, cấu hình `sslmode=verify-full&sslrootcert=/duong-dan/chung-chi.crt` theo chứng chỉ Supabase và cấp file đó an toàn cho môi trường chạy. Không tắt SSL.
